@@ -79,25 +79,7 @@ Runtime dependencies are intentionally minimal:
 
 All HTTP calls use the Node.js built-in `fetch`. Transcript fetching is hand-rolled with no third-party libraries.
 
-## Docker
-
-A `Dockerfile` and `docker-compose.yml` are included for running the server in an isolated container. The image runs as a non-root user on a read-only filesystem with `no-new-privileges` set.
-
-```bash
-docker build -t youtube-mcp .
-docker run -i --read-only --security-opt no-new-privileges \
-  -e YOUTUBE_API_KEY=your_key_here \
-  youtube-mcp
-
-# or, via docker compose
-YOUTUBE_API_KEY=your_key_here docker compose up --build
-```
-
 ## Requirements
 
 - Node.js 18 or newer (for built-in `fetch`)
 - A valid YouTube Data API v3 key
-
-## License
-
-MIT. See [LICENSE](LICENSE).
