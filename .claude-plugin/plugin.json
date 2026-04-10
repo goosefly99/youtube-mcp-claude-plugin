@@ -3,8 +3,5 @@
   "description": "MCP server for YouTube search, transcripts, and video analysis",
   "version": "1.0.0",
   "author": { "name": "olive" },
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/goosefly99/youtube-mcp-claude-plugin.git"
-  }
+  "repository": "https://github.com/goosefly99/youtube-mcp-claude-plugin.git"
 }
