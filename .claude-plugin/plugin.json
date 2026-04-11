@@ -1,5 +1,5 @@
 {
-  "name": "youtube-mcp",
+  "name": "youtube-mcp-auto-dev",
   "description": "MCP server for YouTube search, transcripts, and video analysis",
   "version": "1.0.0",
   "author": { "name": "olive" },
