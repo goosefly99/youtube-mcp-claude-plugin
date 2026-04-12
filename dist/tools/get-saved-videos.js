@@ -22,7 +22,7 @@ function formatSavedVideo(v) {
     return lines.filter(Boolean).join("\n");
 }
 export function registerGetSavedVideosTool(server) {
-    server.tool("get_saved_videos", "Search and retrieve YouTube videos previously saved to the local database. No API call is made — returns data from the local SQLite cache.", {
+    server.tool("get_saved_videos", "Failsafe: query locally cached YouTube videos without an API call. The database is populated automatically when other tools (search_videos, get_video_details, etc.) fetch from the YouTube API — use this only as a fallback to avoid redundant API requests or when working offline.", {
         query: z
             .string()
             .optional()

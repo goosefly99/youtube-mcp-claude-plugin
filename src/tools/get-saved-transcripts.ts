@@ -25,7 +25,7 @@ function formatSavedTranscript(t: TranscriptRow, snippetLen: number): string {
 export function registerGetSavedTranscriptsTool(server: McpServer): void {
   server.tool(
     "get_saved_transcripts",
-    "Search and retrieve YouTube transcripts previously saved to the local database. No API call is made — returns data from the local SQLite cache.",
+    "Failsafe: query locally cached YouTube transcripts without an API call. The database is populated automatically when get_transcript fetches from the YouTube API — use this only as a fallback to avoid redundant API requests or when working offline.",
     {
       query: z
         .string()

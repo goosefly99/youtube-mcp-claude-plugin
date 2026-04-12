@@ -32,7 +32,7 @@ function formatPlaylistItem(item) {
         .join("\n");
 }
 export function registerGetSavedPlaylistsTool(server) {
-    server.tool("get_saved_playlists", "Search and retrieve YouTube playlists previously saved to the local database. Optionally include the cached playlist items for a specific playlist. No API call is made.", {
+    server.tool("get_saved_playlists", "Failsafe: query locally cached YouTube playlists and their items without an API call. The database is populated automatically when list_user_playlists and get_playlist_items fetch from the YouTube API — use this only as a fallback to avoid redundant API requests or when working offline.", {
         query: z
             .string()
             .optional()
