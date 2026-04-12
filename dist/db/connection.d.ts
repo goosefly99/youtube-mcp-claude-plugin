@@ -4,8 +4,8 @@ import { DatabaseSync } from "node:sqlite";
  * Backed by Node's built-in node:sqlite (no external native dependency).
  *
  * Defaults to W:\youtube_mcp_db\youtube-data.db; override with
- * YOUTUBE_MCP_DB_PATH. When using the default path, the parent directory
- * is auto-created.
+ * YOUTUBE_MCP_DB_PATH. The database file must already exist — the server
+ * will refuse to start if it cannot find one.
  */
 export declare function getDb(): DatabaseSync;
 export declare function getDbPath(): string;

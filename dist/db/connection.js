@@ -3,7 +3,9 @@ import path from "node:path";
 import fs from "node:fs";
 const DEFAULT_DB_DIR = "W:\\youtube_mcp_db";
 const DEFAULT_DB_PATH = path.join(DEFAULT_DB_DIR, "youtube-data.db");
-const DB_PATH = process.env.YOUTUBE_MCP_DB_PATH ?? DEFAULT_DB_PATH;
+const rawDbPath = process.env.YOUTUBE_MCP_DB_PATH;
+// Guard against unresolved ${…} template strings from plugin config
+const DB_PATH = rawDbPath && !rawDbPath.includes("${") ? rawDbPath : DEFAULT_DB_PATH;
 const IS_DEFAULT_PATH = DB_PATH === DEFAULT_DB_PATH;
 let _db = null;
 /**
@@ -11,14 +13,15 @@ let _db = null;
  * Backed by Node's built-in node:sqlite (no external native dependency).
  *
  * Defaults to W:\youtube_mcp_db\youtube-data.db; override with
- * YOUTUBE_MCP_DB_PATH. When using the default path, the parent directory
- * is auto-created.
+ * YOUTUBE_MCP_DB_PATH. The database file must already exist — the server
+ * will refuse to start if it cannot find one.
  */
 export function getDb() {
     if (_db)
         return _db;
-    if (IS_DEFAULT_PATH) {
-        fs.mkdirSync(DEFAULT_DB_DIR, { recursive: true });
+    if (!fs.existsSync(DB_PATH)) {
+        throw new Error(`YouTube MCP database not found at: ${DB_PATH}\n` +
+            `Set YOUTUBE_MCP_DB_PATH to the path of an existing database file.`);
     }
     _db = new DatabaseSync(DB_PATH);
     _db.exec("PRAGMA journal_mode = WAL");
