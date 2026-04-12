@@ -1,6 +1,8 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { searchVideos } from "../services/youtube-api.js";
+import { getDb } from "../db/connection.js";
+import { upsertSearchResults } from "../db/repos/videos.js";
 
 export function registerSearchVideosTool(server: McpServer): void {
   server.tool(
@@ -17,6 +19,16 @@ export function registerSearchVideosTool(server: McpServer): void {
     },
     async ({ query, maxResults }) => {
       const results = await searchVideos(query, maxResults);
+
+      try {
+        if (results.length > 0) {
+          upsertSearchResults(getDb(), results, "search");
+        }
+      } catch (err) {
+        process.stderr.write(
+          `youtube-mcp: DB upsert failed (search_videos): ${err}\n`
+        );
+      }
 
       if (results.length === 0) {
         return {

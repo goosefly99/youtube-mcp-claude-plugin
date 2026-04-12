@@ -1,6 +1,8 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { fetchTranscript, listAvailableLanguages } from "../services/transcript.js";
+import { getDb } from "../db/connection.js";
+import { upsertTranscript } from "../db/repos/transcripts.js";
 
 function formatTimestamp(seconds: number): string {
   const h = Math.floor(seconds / 3600);
@@ -55,6 +57,14 @@ export function registerGetTranscriptTool(server: McpServer): void {
       }
 
       const transcript = await fetchTranscript(videoId, language);
+
+      try {
+        upsertTranscript(getDb(), transcript);
+      } catch (err) {
+        process.stderr.write(
+          `youtube-mcp: DB upsert failed (get_transcript): ${err}\n`
+        );
+      }
 
       const header = [
         `Transcript for video: ${transcript.videoId}`,

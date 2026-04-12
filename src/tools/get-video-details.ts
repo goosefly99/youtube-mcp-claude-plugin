@@ -1,6 +1,8 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { getVideoDetails } from "../services/youtube-api.js";
+import { getDb } from "../db/connection.js";
+import { upsertVideo } from "../db/repos/videos.js";
 
 export function registerGetVideoDetailsTool(server: McpServer): void {
   server.tool(
@@ -13,6 +15,14 @@ export function registerGetVideoDetailsTool(server: McpServer): void {
     },
     async ({ videoId }) => {
       const details = await getVideoDetails(videoId);
+
+      try {
+        upsertVideo(getDb(), details, "get_video_details");
+      } catch (err) {
+        process.stderr.write(
+          `youtube-mcp: DB upsert failed (get_video_details): ${err}\n`
+        );
+      }
 
       const views = Number(details.statistics.viewCount).toLocaleString();
       const likes = Number(details.statistics.likeCount).toLocaleString();

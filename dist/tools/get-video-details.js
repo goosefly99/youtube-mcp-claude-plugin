@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { getVideoDetails } from "../services/youtube-api.js";
+import { getDb } from "../db/connection.js";
+import { upsertVideo } from "../db/repos/videos.js";
 export function registerGetVideoDetailsTool(server) {
     server.tool("get_video_details", "Get detailed metadata for a YouTube video including title, description, duration, statistics, and tags.", {
         videoId: z
@@ -7,6 +9,12 @@ export function registerGetVideoDetailsTool(server) {
             .describe("YouTube video ID or full URL"),
     }, async ({ videoId }) => {
         const details = await getVideoDetails(videoId);
+        try {
+            upsertVideo(getDb(), details, "get_video_details");
+        }
+        catch (err) {
+            process.stderr.write(`youtube-mcp: DB upsert failed (get_video_details): ${err}\n`);
+        }
         const views = Number(details.statistics.viewCount).toLocaleString();
         const likes = Number(details.statistics.likeCount).toLocaleString();
         const comments = Number(details.statistics.commentCount).toLocaleString();
