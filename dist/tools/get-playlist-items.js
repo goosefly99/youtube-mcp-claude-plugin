@@ -3,8 +3,9 @@ import { fetchOAuthApi } from "../services/youtube-oauth.js";
 import { getDb } from "../db/connection.js";
 import { upsertPlaylistItems } from "../db/repos/playlists.js";
 import { upsertVideo } from "../db/repos/videos.js";
+import { fetchAndStoreVideo } from "./get-video-details.js";
 export function registerGetPlaylistItemsTool(server) {
-    server.tool("get_playlist_items", "Fetch all videos from a YouTube playlist by its ID. Returns position, title, video URL, channel, and playlist item ID for each video. Requires OAuth credentials (YOUTUBE_OAUTH_TOKEN_PATH).", {
+    server.tool("get_playlist_items", "Canonical playlist fetch entrypoint. Fetches all videos from a YouTube playlist by its ID. With hydrate=true (default), sequentially fetches and upserts metadata + transcript for every item via get_video_details. With hydrate=false, behaves as a list-only operation. Requires OAuth credentials (YOUTUBE_OAUTH_TOKEN_PATH).", {
         playlistId: z
             .string()
             .describe("YouTube playlist ID (e.g. PLbclGrMrkq04ygNoBJC4Y1LPfBo8qzFhA)"),
@@ -14,7 +15,11 @@ export function registerGetPlaylistItemsTool(server) {
             .max(500)
             .default(500)
             .describe("Maximum total videos to return (default 500, paginates automatically)"),
-    }, async ({ playlistId, maxResults }) => {
+        hydrate: z
+            .boolean()
+            .default(true)
+            .describe("When true (default), sequentially call get_video_details(includeTranscript=true) for every playlist item, upserting both metadata and transcripts. When false, only list and upsert playlist/video rows with the thin data from playlistItems.list."),
+    }, async ({ playlistId, maxResults, hydrate }) => {
         const items = [];
         let pageToken;
         do {
@@ -47,18 +52,48 @@ export function registerGetPlaylistItemsTool(server) {
                 channelTitle: item.snippet.videoOwnerChannelTitle ?? null,
                 videoPublishedAt: item.contentDetails.videoPublishedAt ?? null,
             })));
-            for (const item of items) {
-                upsertVideo(db, {
-                    videoId: item.contentDetails.videoId,
-                    title: item.snippet.title,
-                    channelTitle: item.snippet.videoOwnerChannelTitle,
-                    description: item.snippet.description,
-                    publishedAt: item.contentDetails.videoPublishedAt ?? item.snippet.publishedAt,
-                }, "playlist_items");
+            if (!hydrate) {
+                // Thin upsert — only the data we have from playlistItems.list
+                for (const item of items) {
+                    upsertVideo(db, {
+                        videoId: item.contentDetails.videoId,
+                        title: item.snippet.title,
+                        channelTitle: item.snippet.videoOwnerChannelTitle,
+                        description: item.snippet.description,
+                        publishedAt: item.contentDetails.videoPublishedAt ?? item.snippet.publishedAt,
+                    }, "playlist_items");
+                }
             }
         }
         catch (err) {
             process.stderr.write(`youtube-mcp: DB upsert failed (get_playlist_items): ${err}\n`);
+        }
+        // Hydrate pass — for each item, call the consolidated fetch (metadata + transcript).
+        // Sequential to avoid hammering the API; partial failures per item are tolerated.
+        const hydrationOutcomes = [];
+        if (hydrate) {
+            for (const item of items) {
+                const videoId = item.contentDetails.videoId;
+                try {
+                    const outcome = await fetchAndStoreVideo(videoId, true);
+                    hydrationOutcomes.push({
+                        videoId: outcome.videoId,
+                        metadata: outcome.metadata,
+                        transcript: outcome.transcript,
+                        reason: outcome.transcriptReason,
+                    });
+                }
+                catch (err) {
+                    const message = err instanceof Error ? err.message : String(err);
+                    process.stderr.write(`youtube-mcp: hydrate failed for ${videoId}: ${message}\n`);
+                    hydrationOutcomes.push({
+                        videoId,
+                        metadata: "failed",
+                        transcript: "skipped",
+                        reason: message,
+                    });
+                }
+            }
         }
         const formatted = items
             .map((item) => {
@@ -76,13 +111,22 @@ export function registerGetPlaylistItemsTool(server) {
             ].join("\n");
         })
             .join("\n\n");
+        const parts = [
+            `Playlist ${playlistId} — ${items.length} video(s):`,
+            ``,
+            formatted,
+        ];
+        if (hydrate) {
+            const statusLines = hydrationOutcomes.map((o) => {
+                const transcriptPart = o.reason
+                    ? `transcript=${o.transcript} (${o.reason})`
+                    : `transcript=${o.transcript}`;
+                return `- ${o.videoId}: metadata=${o.metadata} ${transcriptPart}`;
+            });
+            parts.push(``, `Hydration statuses (${hydrationOutcomes.length} items):`, ...statusLines);
+        }
         return {
-            content: [
-                {
-                    type: "text",
-                    text: `Playlist ${playlistId} — ${items.length} video(s):\n\n${formatted}`,
-                },
-            ],
+            content: [{ type: "text", text: parts.join("\n") }],
         };
     });
 }
