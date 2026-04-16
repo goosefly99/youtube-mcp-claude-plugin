@@ -101,7 +101,8 @@ export function registerGetPlaylistItemsTool(server: McpServer): void {
                 description: item.snippet.description,
                 publishedAt: item.contentDetails.videoPublishedAt ?? item.snippet.publishedAt,
               },
-              "playlist_items"
+              "playlist_items",
+              { metadataStatus: "pending" }
             );
           }
         }
@@ -134,7 +135,8 @@ export function registerGetPlaylistItemsTool(server: McpServer): void {
         for (const details of fetchedDetails.values()) {
           detailsMap.set(details.videoId, details);
           try {
-            upsertVideo(db, details, "get_playlist_items");
+            // metadata_status written as 'ok' here; transcript_status resolved below
+            upsertVideo(db, details, "get_playlist_items", { metadataStatus: "ok" });
           } catch (err) {
             process.stderr.write(
               `youtube-mcp: DB upsert failed for ${details.videoId}: ${err}\n`
@@ -142,13 +144,25 @@ export function registerGetPlaylistItemsTool(server: McpServer): void {
           }
         }
 
-        // Mark IDs from failed chunks
+        // Mark IDs from failed chunks — upsert stub rows with metadata_status='failed'
         for (const failure of chunkFailures) {
           process.stderr.write(
             `youtube-mcp: batch chunk failed (${failure.videoIds.length} IDs): ${failure.reason}\n`
           );
           for (const id of failure.videoIds) {
             metadataFailures.add(id);
+            try {
+              upsertVideo(
+                db,
+                { videoId: id },
+                "get_playlist_items",
+                { metadataStatus: "failed", transcriptStatus: "failed", transcriptReason: failure.reason }
+              );
+            } catch (err) {
+              process.stderr.write(
+                `youtube-mcp: DB upsert failed (failed-chunk stub) for ${id}: ${err}\n`
+              );
+            }
           }
         }
 
@@ -156,6 +170,18 @@ export function registerGetPlaylistItemsTool(server: McpServer): void {
         for (const id of videoIds) {
           if (!detailsMap.has(id) && !metadataFailures.has(id)) {
             metadataFailures.add(id);
+            try {
+              upsertVideo(
+                db,
+                { videoId: id },
+                "get_playlist_items",
+                { metadataStatus: "failed" }
+              );
+            } catch (err) {
+              process.stderr.write(
+                `youtube-mcp: DB upsert failed (missing-video stub) for ${id}: ${err}\n`
+              );
+            }
           }
         }
 
@@ -178,6 +204,14 @@ export function registerGetPlaylistItemsTool(server: McpServer): void {
             const transcript = await fetchTranscript(videoId);
             try {
               upsertTranscript(getDb(), transcript);
+              // Update transcript_status on the video row
+              const details = detailsMap.get(videoId);
+              if (details) {
+                upsertVideo(getDb(), details, "get_playlist_items", {
+                  metadataStatus: "ok",
+                  transcriptStatus: "ok",
+                });
+              }
             } catch (err) {
               process.stderr.write(
                 `youtube-mcp: DB upsert failed (transcript) for ${videoId}: ${err}\n`
@@ -206,6 +240,22 @@ export function registerGetPlaylistItemsTool(server: McpServer): void {
             process.stderr.write(
               `youtube-mcp: transcript fetch ${transcriptStatus} for ${videoId}: ${message}\n`
             );
+            // Persist transcript status — "unavailable" maps to "failed" at DB level
+            const dbTxStatus = transcriptStatus === "unavailable" ? "failed" : transcriptStatus;
+            const details = detailsMap.get(videoId);
+            if (details) {
+              try {
+                upsertVideo(getDb(), details, "get_playlist_items", {
+                  metadataStatus: "ok",
+                  transcriptStatus: dbTxStatus,
+                  transcriptReason: message,
+                });
+              } catch (upsertErr) {
+                process.stderr.write(
+                  `youtube-mcp: DB upsert failed (transcript status) for ${videoId}: ${upsertErr}\n`
+                );
+              }
+            }
           }
 
           hydrationOutcomes.push({

@@ -3,6 +3,7 @@ import type { DatabaseSync } from "node:sqlite";
 /**
  * Creates all database tables if they don't already exist.
  * Safe to call on every startup — all statements use IF NOT EXISTS.
+ * Additive column migrations use PRAGMA table_info to stay idempotent.
  */
 export function initSchema(db: DatabaseSync): void {
   db.exec(`
@@ -69,6 +70,22 @@ export function initSchema(db: DatabaseSync): void {
     CREATE INDEX IF NOT EXISTS idx_playlist_items_playlist_id ON playlist_items(playlist_id);
     CREATE INDEX IF NOT EXISTS idx_playlist_items_video_id    ON playlist_items(video_id);
   `);
+
+  // Additive migration: add status columns to videos table if not present.
+  // Uses PRAGMA table_info for idempotency — safe to run multiple times.
+  const videoCols = (
+    db.prepare("PRAGMA table_info(videos)").all() as Array<{ name: string }>
+  ).map((c) => c.name);
+
+  if (!videoCols.includes("metadata_status")) {
+    db.exec("ALTER TABLE videos ADD COLUMN metadata_status TEXT NULL");
+  }
+  if (!videoCols.includes("transcript_status")) {
+    db.exec("ALTER TABLE videos ADD COLUMN transcript_status TEXT NULL");
+  }
+  if (!videoCols.includes("transcript_reason")) {
+    db.exec("ALTER TABLE videos ADD COLUMN transcript_reason TEXT NULL");
+  }
 
   const row = db
     .prepare("SELECT COUNT(*) as cnt FROM schema_version")

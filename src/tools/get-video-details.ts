@@ -8,6 +8,8 @@ import { upsertVideo } from "../db/repos/videos.js";
 import { upsertTranscript } from "../db/repos/transcripts.js";
 import type { VideoDetails } from "../types.js";
 
+// TranscriptStatus extends the DB-level type with "unavailable" and "skipped"
+// which are tool-layer states not persisted to the DB status column.
 export type TranscriptStatus =
   | "ok"
   | "missing"
@@ -48,15 +50,14 @@ export async function fetchAndStoreVideo(
   const details = detailsMap.get(id)!;
   const resolvedVideoId = details.videoId;
 
-  try {
-    upsertVideo(getDb(), details, "get_video_details");
-  } catch (err) {
-    process.stderr.write(
-      `youtube-mcp: DB upsert failed (get_video_details): ${err}\n`
-    );
-  }
-
   if (!includeTranscript) {
+    try {
+      upsertVideo(getDb(), details, "get_video_details", { metadataStatus: "ok" });
+    } catch (err) {
+      process.stderr.write(
+        `youtube-mcp: DB upsert failed (get_video_details): ${err}\n`
+      );
+    }
     return {
       videoId: resolvedVideoId,
       details,
@@ -69,6 +70,10 @@ export async function fetchAndStoreVideo(
   try {
     const transcript = await fetchTranscript(resolvedVideoId);
     try {
+      upsertVideo(getDb(), details, "get_video_details", {
+        metadataStatus: "ok",
+        transcriptStatus: "ok",
+      });
       upsertTranscript(getDb(), transcript);
     } catch (err) {
       process.stderr.write(
@@ -85,32 +90,46 @@ export async function fetchAndStoreVideo(
     const message = err instanceof Error ? err.message : String(err);
     const lower = message.toLowerCase();
 
-    let status: TranscriptStatus;
+    let tStatus: TranscriptStatus;
     if (
       lower.includes("no captions") ||
       lower.includes("captions disabled") ||
       lower.includes("not available") ||
       lower.includes("http 404")
     ) {
-      status = "missing";
+      tStatus = "missing";
     } else if (
       lower.includes("transcripts disabled") ||
       lower.includes("captions are disabled")
     ) {
-      status = "unavailable";
+      tStatus = "unavailable";
     } else {
-      status = "failed";
+      tStatus = "failed";
+    }
+
+    // Persist status — "unavailable" maps to "failed" at DB level (not in schema enum)
+    const dbTranscriptStatus = tStatus === "unavailable" ? "failed" : tStatus;
+    try {
+      upsertVideo(getDb(), details, "get_video_details", {
+        metadataStatus: "ok",
+        transcriptStatus: dbTranscriptStatus,
+        transcriptReason: message,
+      });
+    } catch (upsertErr) {
+      process.stderr.write(
+        `youtube-mcp: DB upsert failed (get_video_details): ${upsertErr}\n`
+      );
     }
 
     process.stderr.write(
-      `youtube-mcp: transcript fetch ${status} for ${resolvedVideoId}: ${message}\n`
+      `youtube-mcp: transcript fetch ${tStatus} for ${resolvedVideoId}: ${message}\n`
     );
 
     return {
       videoId: resolvedVideoId,
       details,
       metadata: "ok",
-      transcript: status,
+      transcript: tStatus,
       transcriptReason: message,
     };
   }

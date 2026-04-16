@@ -1,7 +1,14 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { VideoSearchResult, VideoDetails } from "../../types.js";
 import type { VideoRow } from "../types.js";
+import type { MetadataStatus, TranscriptStatus } from "../../types/status.js";
 import { withTransaction } from "../connection.js";
+
+export interface VideoStatusOpts {
+  metadataStatus?: MetadataStatus | null;
+  transcriptStatus?: TranscriptStatus | null;
+  transcriptReason?: string | null;
+}
 
 export interface QueryVideosOpts {
   query?: string;
@@ -21,39 +28,49 @@ function toIntOrNull(value: string | number | undefined | null): number | null {
  * Upserts a single video row. Accepts either a partial search result or full
  * video details — fields that are unavailable on the search result are stored
  * as NULL and filled in later if get_video_details is called for the same id.
+ *
+ * The optional `status` parameter writes the three ingest-status columns
+ * (metadata_status, transcript_status, transcript_reason). When omitted,
+ * existing status values are preserved via COALESCE.
  */
 export function upsertVideo(
   db: DatabaseSync,
   video: Partial<VideoDetails> & { videoId: string },
-  source: string
+  source: string,
+  status?: VideoStatusOpts
 ): void {
   db.prepare(
     `
     INSERT INTO videos (
       video_id, title, channel_id, channel_title, description,
       published_at, duration, category_id, default_language, thumbnail_url,
-      view_count, like_count, comment_count, tags_json, source, saved_at
+      view_count, like_count, comment_count, tags_json, source, saved_at,
+      metadata_status, transcript_status, transcript_reason
     ) VALUES (
       @video_id, @title, @channel_id, @channel_title, @description,
       @published_at, @duration, @category_id, @default_language, @thumbnail_url,
-      @view_count, @like_count, @comment_count, @tags_json, @source, @saved_at
+      @view_count, @like_count, @comment_count, @tags_json, @source, @saved_at,
+      @metadata_status, @transcript_status, @transcript_reason
     )
     ON CONFLICT(video_id) DO UPDATE SET
-      title            = COALESCE(excluded.title, videos.title),
-      channel_id       = COALESCE(excluded.channel_id, videos.channel_id),
-      channel_title    = COALESCE(excluded.channel_title, videos.channel_title),
-      description      = COALESCE(excluded.description, videos.description),
-      published_at     = COALESCE(excluded.published_at, videos.published_at),
-      duration         = COALESCE(excluded.duration, videos.duration),
-      category_id      = COALESCE(excluded.category_id, videos.category_id),
-      default_language = COALESCE(excluded.default_language, videos.default_language),
-      thumbnail_url    = COALESCE(excluded.thumbnail_url, videos.thumbnail_url),
-      view_count       = COALESCE(excluded.view_count, videos.view_count),
-      like_count       = COALESCE(excluded.like_count, videos.like_count),
-      comment_count    = COALESCE(excluded.comment_count, videos.comment_count),
-      tags_json        = COALESCE(excluded.tags_json, videos.tags_json),
-      source           = excluded.source,
-      saved_at         = excluded.saved_at
+      title             = COALESCE(excluded.title, videos.title),
+      channel_id        = COALESCE(excluded.channel_id, videos.channel_id),
+      channel_title     = COALESCE(excluded.channel_title, videos.channel_title),
+      description       = COALESCE(excluded.description, videos.description),
+      published_at      = COALESCE(excluded.published_at, videos.published_at),
+      duration          = COALESCE(excluded.duration, videos.duration),
+      category_id       = COALESCE(excluded.category_id, videos.category_id),
+      default_language  = COALESCE(excluded.default_language, videos.default_language),
+      thumbnail_url     = COALESCE(excluded.thumbnail_url, videos.thumbnail_url),
+      view_count        = COALESCE(excluded.view_count, videos.view_count),
+      like_count        = COALESCE(excluded.like_count, videos.like_count),
+      comment_count     = COALESCE(excluded.comment_count, videos.comment_count),
+      tags_json         = COALESCE(excluded.tags_json, videos.tags_json),
+      source            = excluded.source,
+      saved_at          = excluded.saved_at,
+      metadata_status   = COALESCE(excluded.metadata_status, videos.metadata_status),
+      transcript_status = COALESCE(excluded.transcript_status, videos.transcript_status),
+      transcript_reason = COALESCE(excluded.transcript_reason, videos.transcript_reason)
   `
   ).run({
     video_id: video.videoId,
@@ -72,6 +89,9 @@ export function upsertVideo(
     tags_json: video.tags && video.tags.length > 0 ? JSON.stringify(video.tags) : null,
     source,
     saved_at: new Date().toISOString(),
+    metadata_status: status?.metadataStatus ?? null,
+    transcript_status: status?.transcriptStatus ?? null,
+    transcript_reason: status?.transcriptReason ?? null,
   });
 }
 
