@@ -30,11 +30,18 @@ The canonical fetch entrypoint for a **whole** playlist.
 - `hydrate=false`: list-only behavior (original thin upsert from
   `playlistItems.list`); no transcript fetch is performed.
 
-### `get_transcript` — **cache-read accessor only**
+### `get_transcript` — **cache-read-only**
 Post-update, `get_transcript` is not part of the orchestrator fetch flow.
 Orchestrator ETL jobs must use `get_video_details` / `get_playlist_items` with
 their hydration flags on; `get_transcript` remains as a convenience
 read-through endpoint but should not be called in a loop after metadata.
+
+**Y3 update:** `get_transcript` is now strictly cache-read-only. It does NOT
+fetch from InnerTube or make any outbound HTTP requests. It delegates
+exclusively to `getTranscriptByVideoId` (the local SQLite cache) and returns
+`{ videoId, transcript: string | null, status: "ok" | "missing" }`. To
+populate the cache, use `get_video_details(includeTranscript=true)` or
+`get_playlist_items(hydrate=true)`.
 
 ## Status codes
 
