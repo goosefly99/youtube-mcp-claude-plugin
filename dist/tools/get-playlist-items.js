@@ -7,6 +7,12 @@ import { batchFetchVideoDetails } from "../services/videoBatchFetcher.js";
 import { fetchTranscript } from "../services/transcript.js";
 import { upsertTranscript } from "../db/repos/transcripts.js";
 import { toDbTranscriptStatus } from "../types/status.js";
+/**
+ * Transcript fetches in the hydrate pass are deliberately serial (concurrency=1)
+ * to avoid hammering InnerTube. This constant documents the intent and makes it
+ * easy to find if the policy changes.
+ */
+export const HYDRATE_TRANSCRIPT_CONCURRENCY = 1;
 export function registerGetPlaylistItemsTool(server) {
     server.tool("get_playlist_items", "Canonical playlist fetch entrypoint. Fetches all videos from a YouTube playlist by its ID. With hydrate=true (default), sequentially fetches and upserts metadata + transcript for every item via get_video_details. With hydrate=false, behaves as a list-only operation. Requires OAuth credentials (YOUTUBE_OAUTH_TOKEN_PATH).", {
         playlistId: z
@@ -118,7 +124,7 @@ export function registerGetPlaylistItemsTool(server) {
                     }
                 }
             }
-            // Step 2: per-video transcript fetch (sequential to avoid hammering InnerTube)
+            // Step 2: per-video transcript fetch — serial (HYDRATE_TRANSCRIPT_CONCURRENCY=1) to avoid hammering InnerTube
             for (const videoId of videoIds) {
                 if (metadataFailures.has(videoId)) {
                     hydrationOutcomes.push({

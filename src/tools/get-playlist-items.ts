@@ -11,6 +11,13 @@ import type { FetchVideoOutcome } from "./get-video-details.js";
 import type { ToolTranscriptStatus } from "../types/status.js";
 import { toDbTranscriptStatus } from "../types/status.js";
 
+/**
+ * Transcript fetches in the hydrate pass are deliberately serial (concurrency=1)
+ * to avoid hammering InnerTube. This constant documents the intent and makes it
+ * easy to find if the policy changes.
+ */
+export const HYDRATE_TRANSCRIPT_CONCURRENCY = 1;
+
 interface PlaylistItemSnippet {
   title: string;
   description: string;
@@ -187,7 +194,7 @@ export function registerGetPlaylistItemsTool(server: McpServer): void {
           }
         }
 
-        // Step 2: per-video transcript fetch (sequential to avoid hammering InnerTube)
+        // Step 2: per-video transcript fetch — serial (HYDRATE_TRANSCRIPT_CONCURRENCY=1) to avoid hammering InnerTube
         for (const videoId of videoIds) {
           if (metadataFailures.has(videoId)) {
             hydrationOutcomes.push({

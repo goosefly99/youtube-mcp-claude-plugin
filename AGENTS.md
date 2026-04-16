@@ -43,6 +43,20 @@ exclusively to `getTranscriptByVideoId` (the local SQLite cache) and returns
 populate the cache, use `get_video_details(includeTranscript=true)` or
 `get_playlist_items(hydrate=true)`.
 
+## Retry behavior
+
+No retry logic is implemented in any tool. All operations are single-attempt;
+the caller (orchestrating agent or user) is responsible for retrying on failure.
+
+| Tool                  | Operation              | Retries | Backoff |
+|-----------------------|------------------------|---------|---------|
+| `get_video_details`   | videos.list (metadata) | none    | —       |
+| `get_video_details`   | InnerTube transcript   | none    | —       |
+| `get_playlist_items`  | playlistItems.list     | none    | —       |
+| `get_playlist_items`  | videos.list (hydrate)  | none    | —       |
+| `get_playlist_items`  | InnerTube transcript   | none    | —       |
+| `get_transcript`      | cache read (SQLite)    | none    | —       |
+
 ## Status codes
 
 Both consolidated tools emit per-item status blocks. Transcript status is one
@@ -78,7 +92,15 @@ Hydration statuses (N items):
 ...
 ```
 
-## Quota budget — videos.list batching (Y1)
+## Quota budget
+
+### `get_transcript` — 0 quota units
+
+`get_transcript` is **cache-read-only** (see [Cache-read-only note](#get_transcript--cache-read-only)
+above). It makes zero outbound HTTP requests and consumes zero YouTube Data API
+quota units.
+
+### `get_video_details` and `get_playlist_items` — videos.list batching (Y1)
 
 `get_playlist_items` (hydrate path) and `get_video_details` (single-video path)
 both use `batchFetchVideoDetails` from `src/services/videoBatchFetcher.ts`.
@@ -101,6 +123,7 @@ not batchable. Total quota cost for a playlist hydration of N videos:
 - YouTube Data API v3: `ceil(N / 50)` quota units (videos.list)
 - playlistItems.list paging: `ceil(N / 50)` quota units (independent of hydration)
 - InnerTube transcript: 2 requests per video (player endpoint + caption XML), no quota deducted
+- **Total Data API quota: `2 · ceil(N / 50)` units** (videos.list + playlistItems.list)
 
 ## Build
 
