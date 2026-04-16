@@ -38,11 +38,14 @@ export async function fetchAndStoreVideo(
 ): Promise<FetchVideoOutcome> {
   // 1. Metadata (required — throws on failure so the top-level tool can surface it)
   const id = parseVideoId(videoId);
-  const batchResults = await batchFetchVideoDetails([id]);
-  if (batchResults.length === 0) {
+  const { details: detailsMap, failures } = await batchFetchVideoDetails([id]);
+  if (failures.length > 0) {
+    throw new Error(failures[0].reason);
+  }
+  if (!detailsMap.has(id)) {
     throw new Error(`Video not found: ${id}`);
   }
-  const details = batchResults[0];
+  const details = detailsMap.get(id)!;
   const resolvedVideoId = details.videoId;
 
   try {

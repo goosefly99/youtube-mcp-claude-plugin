@@ -123,34 +123,38 @@ export function registerGetPlaylistItemsTool(server: McpServer): void {
         const videoIds = items.map((item) => item.contentDetails.videoId);
 
         // Step 1: batch metadata fetch — ceil(N/50) videos.list calls
+        // Per-chunk failures are isolated: chunks that succeed are upserted
+        // immediately; only IDs in failed chunks are marked metadata=failed.
         const detailsMap = new Map<string, FetchVideoOutcome["details"]>();
         const metadataFailures = new Set<string>();
-        try {
-          const allDetails = await batchFetchVideoDetails(videoIds);
-          const db = getDb();
-          for (const details of allDetails) {
-            detailsMap.set(details.videoId, details);
-            try {
-              upsertVideo(db, details, "get_playlist_items");
-            } catch (err) {
-              process.stderr.write(
-                `youtube-mcp: DB upsert failed for ${details.videoId}: ${err}\n`
-              );
-            }
+        const { details: fetchedDetails, failures: chunkFailures } =
+          await batchFetchVideoDetails(videoIds);
+
+        const db = getDb();
+        for (const details of fetchedDetails.values()) {
+          detailsMap.set(details.videoId, details);
+          try {
+            upsertVideo(db, details, "get_playlist_items");
+          } catch (err) {
+            process.stderr.write(
+              `youtube-mcp: DB upsert failed for ${details.videoId}: ${err}\n`
+            );
           }
-          // Mark any IDs not returned by the API as failed
-          for (const id of videoIds) {
-            if (!detailsMap.has(id)) {
-              metadataFailures.add(id);
-            }
-          }
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
+        }
+
+        // Mark IDs from failed chunks
+        for (const failure of chunkFailures) {
           process.stderr.write(
-            `youtube-mcp: batch metadata fetch failed: ${message}\n`
+            `youtube-mcp: batch chunk failed (${failure.videoIds.length} IDs): ${failure.reason}\n`
           );
-          // All IDs failed at batch level
-          for (const id of videoIds) {
+          for (const id of failure.videoIds) {
+            metadataFailures.add(id);
+          }
+        }
+
+        // Mark any IDs not returned by the API (e.g. deleted videos) as failed
+        for (const id of videoIds) {
+          if (!detailsMap.has(id) && !metadataFailures.has(id)) {
             metadataFailures.add(id);
           }
         }

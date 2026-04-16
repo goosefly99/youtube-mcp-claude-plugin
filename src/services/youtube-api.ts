@@ -57,7 +57,7 @@ export function parseVideoId(input: string): string {
   return trimmed;
 }
 
-function parseDuration(iso: string): string {
+export function parseDuration(iso: string): string {
   const match = iso.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
   if (!match) return iso;
   const h = match[1] ? `${match[1]}h ` : "";

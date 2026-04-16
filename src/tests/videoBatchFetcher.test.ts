@@ -37,13 +37,14 @@ describe("batchFetchVideoDetails", () => {
     };
 
     const videoIds = Array.from({ length: 120 }, (_, i) => `vid${String(i).padStart(3, "0")}`);
-    const results = await batchFetchVideoDetails(videoIds, stubFetcher);
+    const result = await batchFetchVideoDetails(videoIds, stubFetcher);
 
     assert.strictEqual(callCount, 3, `Expected 3 API calls, got ${callCount}`);
     assert.strictEqual(calledWithIds[0].length, 50, "First chunk must be 50");
     assert.strictEqual(calledWithIds[1].length, 50, "Second chunk must be 50");
     assert.strictEqual(calledWithIds[2].length, 20, "Third chunk must be 20");
-    assert.strictEqual(results.length, 120, "Must return details for all 120 videos");
+    assert.strictEqual(result.details.size, 120, "Must return details for all 120 videos");
+    assert.strictEqual(result.failures.length, 0, "Must have no failures");
   });
 
   it("issues exactly 1 call for 1 video ID", async () => {
@@ -76,8 +77,50 @@ describe("batchFetchVideoDetails", () => {
       return ids.map(makeFakeDetails);
     };
 
-    const results = await batchFetchVideoDetails([], stubFetcher);
+    const result = await batchFetchVideoDetails([], stubFetcher);
     assert.strictEqual(callCount, 0, "Expected 0 API calls for empty input");
-    assert.deepStrictEqual(results, []);
+    assert.strictEqual(result.details.size, 0, "Expected empty details map");
+    assert.strictEqual(result.failures.length, 0, "Expected no failures");
+  });
+
+  it("isolates per-chunk failures: 2 of 3 chunks succeed, 1 chunk throws", async () => {
+    // 150 IDs → chunks: [0..49] (chunk 1), [50..99] (chunk 2), [100..149] (chunk 3)
+    // chunk 2 (index 1) throws — chunks 1 and 3 must appear in details, chunk 2 IDs in failures
+    const videoIds = Array.from({ length: 150 }, (_, i) => `vid${String(i).padStart(3, "0")}`);
+    const chunk1Ids = videoIds.slice(0, 50);
+    const chunk2Ids = videoIds.slice(50, 100);
+    const chunk3Ids = videoIds.slice(100, 150);
+
+    let callIndex = 0;
+    const stubFetcher = async (ids: string[]): Promise<VideoDetails[]> => {
+      callIndex++;
+      if (callIndex === 2) {
+        throw new Error("Simulated chunk 2 network error");
+      }
+      return ids.map(makeFakeDetails);
+    };
+
+    const result = await batchFetchVideoDetails(videoIds, stubFetcher);
+
+    // Returned details must contain all IDs from chunks 1 and 3 (100 IDs total)
+    assert.strictEqual(result.details.size, 100, `Expected 100 IDs in details map, got ${result.details.size}`);
+    for (const id of chunk1Ids) {
+      assert.ok(result.details.has(id), `Chunk 1 ID ${id} must be present in details`);
+    }
+    for (const id of chunk3Ids) {
+      assert.ok(result.details.has(id), `Chunk 3 ID ${id} must be present in details`);
+    }
+
+    // Failures array must have exactly one entry covering chunk 2's 50 IDs
+    assert.strictEqual(result.failures.length, 1, `Expected 1 failure entry, got ${result.failures.length}`);
+    assert.deepStrictEqual(
+      result.failures[0].videoIds.sort(),
+      chunk2Ids.slice().sort(),
+      "Failure entry must list all 50 chunk 2 IDs"
+    );
+    assert.ok(
+      result.failures[0].reason.includes("Simulated chunk 2 network error"),
+      "Failure reason must include the original error message"
+    );
   });
 });
