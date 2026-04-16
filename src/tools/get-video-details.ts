@@ -7,21 +7,17 @@ import { getDb } from "../db/connection.js";
 import { upsertVideo } from "../db/repos/videos.js";
 import { upsertTranscript } from "../db/repos/transcripts.js";
 import type { VideoDetails } from "../types.js";
+import type { ToolTranscriptStatus } from "../types/status.js";
+import { toDbTranscriptStatus } from "../types/status.js";
 
-// TranscriptStatus extends the DB-level type with "unavailable" and "skipped"
-// which are tool-layer states not persisted to the DB status column.
-export type TranscriptStatus =
-  | "ok"
-  | "missing"
-  | "unavailable"
-  | "failed"
-  | "skipped";
+// ToolTranscriptStatus (from types/status.ts) extends the DB-level type with
+// "unavailable" and "skipped" — tool-layer states mapped before DB persistence.
 
 export interface FetchVideoOutcome {
   videoId: string;
   details: VideoDetails;
   metadata: "ok" | "failed";
-  transcript: TranscriptStatus;
+  transcript: ToolTranscriptStatus;
   transcriptReason?: string;
 }
 
@@ -90,7 +86,7 @@ export async function fetchAndStoreVideo(
     const message = err instanceof Error ? err.message : String(err);
     const lower = message.toLowerCase();
 
-    let tStatus: TranscriptStatus;
+    let tStatus: ToolTranscriptStatus;
     if (
       lower.includes("no captions") ||
       lower.includes("captions disabled") ||
@@ -107,8 +103,8 @@ export async function fetchAndStoreVideo(
       tStatus = "failed";
     }
 
-    // Persist status — "unavailable" maps to "failed" at DB level (not in schema enum)
-    const dbTranscriptStatus = tStatus === "unavailable" ? "failed" : tStatus;
+    // Map tool-layer status to DB-persisted value via shared utility
+    const dbTranscriptStatus = toDbTranscriptStatus(tStatus);
     try {
       upsertVideo(getDb(), details, "get_video_details", {
         metadataStatus: "ok",

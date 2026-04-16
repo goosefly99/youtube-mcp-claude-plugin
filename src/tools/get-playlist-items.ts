@@ -7,7 +7,9 @@ import { upsertVideo } from "../db/repos/videos.js";
 import { batchFetchVideoDetails } from "../services/videoBatchFetcher.js";
 import { fetchTranscript } from "../services/transcript.js";
 import { upsertTranscript } from "../db/repos/transcripts.js";
-import type { FetchVideoOutcome, TranscriptStatus } from "./get-video-details.js";
+import type { FetchVideoOutcome } from "./get-video-details.js";
+import type { ToolTranscriptStatus } from "../types/status.js";
+import { toDbTranscriptStatus } from "../types/status.js";
 
 interface PlaylistItemSnippet {
   title: string;
@@ -197,7 +199,7 @@ export function registerGetPlaylistItemsTool(server: McpServer): void {
             continue;
           }
 
-          let transcriptStatus: TranscriptStatus = "skipped";
+          let transcriptStatus: ToolTranscriptStatus = "skipped";
           let transcriptReason: string | undefined;
 
           try {
@@ -240,8 +242,8 @@ export function registerGetPlaylistItemsTool(server: McpServer): void {
             process.stderr.write(
               `youtube-mcp: transcript fetch ${transcriptStatus} for ${videoId}: ${message}\n`
             );
-            // Persist transcript status — "unavailable" maps to "failed" at DB level
-            const dbTxStatus = transcriptStatus === "unavailable" ? "failed" : transcriptStatus;
+            // Map tool-layer status to DB-persisted value via shared utility
+            const dbTxStatus = toDbTranscriptStatus(transcriptStatus);
             const details = detailsMap.get(videoId);
             if (details) {
               try {

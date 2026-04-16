@@ -101,4 +101,22 @@ describe("status columns on videos table", () => {
     assert.ok(row, "row must exist");
     assert.strictEqual(row.transcript_status, "ok", "transcript_status should be updated to ok");
   });
+
+  it("COALESCE preserves existing metadata_status when upserted without status opts", () => {
+    // Insert with explicit metadata_status='ok'
+    upsertVideo(db, { videoId: "test004", title: "Initial" }, "test", {
+      metadataStatus: "ok",
+    });
+
+    // Re-upsert same video_id with no status opts — COALESCE must keep 'ok'
+    upsertVideo(db, { videoId: "test004", title: "Re-upsert" }, "test");
+
+    const row = db
+      .prepare("SELECT metadata_status, transcript_status FROM videos WHERE video_id = ?")
+      .get("test004") as { metadata_status: string | null; transcript_status: string | null } | undefined;
+
+    assert.ok(row, "row must exist");
+    assert.strictEqual(row.metadata_status, "ok", "metadata_status must be preserved by COALESCE, not overwritten to null");
+    assert.strictEqual(row.transcript_status, null, "transcript_status was never set, should remain null");
+  });
 });

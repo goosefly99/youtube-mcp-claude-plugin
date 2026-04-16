@@ -6,6 +6,7 @@ import { upsertVideo } from "../db/repos/videos.js";
 import { batchFetchVideoDetails } from "../services/videoBatchFetcher.js";
 import { fetchTranscript } from "../services/transcript.js";
 import { upsertTranscript } from "../db/repos/transcripts.js";
+import { toDbTranscriptStatus } from "../types/status.js";
 export function registerGetPlaylistItemsTool(server) {
     server.tool("get_playlist_items", "Canonical playlist fetch entrypoint. Fetches all videos from a YouTube playlist by its ID. With hydrate=true (default), sequentially fetches and upserts metadata + transcript for every item via get_video_details. With hydrate=false, behaves as a list-only operation. Requires OAuth credentials (YOUTUBE_OAUTH_TOKEN_PATH).", {
         playlistId: z
@@ -63,7 +64,7 @@ export function registerGetPlaylistItemsTool(server) {
                         channelTitle: item.snippet.videoOwnerChannelTitle,
                         description: item.snippet.description,
                         publishedAt: item.contentDetails.videoPublishedAt ?? item.snippet.publishedAt,
-                    }, "playlist_items");
+                    }, "playlist_items", { metadataStatus: "pending" });
                 }
             }
         }
@@ -76,33 +77,45 @@ export function registerGetPlaylistItemsTool(server) {
         if (hydrate) {
             const videoIds = items.map((item) => item.contentDetails.videoId);
             // Step 1: batch metadata fetch — ceil(N/50) videos.list calls
+            // Per-chunk failures are isolated: chunks that succeed are upserted
+            // immediately; only IDs in failed chunks are marked metadata=failed.
             const detailsMap = new Map();
             const metadataFailures = new Set();
-            try {
-                const allDetails = await batchFetchVideoDetails(videoIds);
-                const db = getDb();
-                for (const details of allDetails) {
-                    detailsMap.set(details.videoId, details);
+            const { details: fetchedDetails, failures: chunkFailures } = await batchFetchVideoDetails(videoIds);
+            const db = getDb();
+            for (const details of fetchedDetails.values()) {
+                detailsMap.set(details.videoId, details);
+                try {
+                    // metadata_status written as 'ok' here; transcript_status resolved below
+                    upsertVideo(db, details, "get_playlist_items", { metadataStatus: "ok" });
+                }
+                catch (err) {
+                    process.stderr.write(`youtube-mcp: DB upsert failed for ${details.videoId}: ${err}\n`);
+                }
+            }
+            // Mark IDs from failed chunks — upsert stub rows with metadata_status='failed'
+            for (const failure of chunkFailures) {
+                process.stderr.write(`youtube-mcp: batch chunk failed (${failure.videoIds.length} IDs): ${failure.reason}\n`);
+                for (const id of failure.videoIds) {
+                    metadataFailures.add(id);
                     try {
-                        upsertVideo(db, details, "get_playlist_items");
+                        upsertVideo(db, { videoId: id }, "get_playlist_items", { metadataStatus: "failed", transcriptStatus: "failed", transcriptReason: failure.reason });
                     }
                     catch (err) {
-                        process.stderr.write(`youtube-mcp: DB upsert failed for ${details.videoId}: ${err}\n`);
-                    }
-                }
-                // Mark any IDs not returned by the API as failed
-                for (const id of videoIds) {
-                    if (!detailsMap.has(id)) {
-                        metadataFailures.add(id);
+                        process.stderr.write(`youtube-mcp: DB upsert failed (failed-chunk stub) for ${id}: ${err}\n`);
                     }
                 }
             }
-            catch (err) {
-                const message = err instanceof Error ? err.message : String(err);
-                process.stderr.write(`youtube-mcp: batch metadata fetch failed: ${message}\n`);
-                // All IDs failed at batch level
-                for (const id of videoIds) {
+            // Mark any IDs not returned by the API (e.g. deleted videos) as failed
+            for (const id of videoIds) {
+                if (!detailsMap.has(id) && !metadataFailures.has(id)) {
                     metadataFailures.add(id);
+                    try {
+                        upsertVideo(db, { videoId: id }, "get_playlist_items", { metadataStatus: "failed" });
+                    }
+                    catch (err) {
+                        process.stderr.write(`youtube-mcp: DB upsert failed (missing-video stub) for ${id}: ${err}\n`);
+                    }
                 }
             }
             // Step 2: per-video transcript fetch (sequential to avoid hammering InnerTube)
@@ -122,6 +135,14 @@ export function registerGetPlaylistItemsTool(server) {
                     const transcript = await fetchTranscript(videoId);
                     try {
                         upsertTranscript(getDb(), transcript);
+                        // Update transcript_status on the video row
+                        const details = detailsMap.get(videoId);
+                        if (details) {
+                            upsertVideo(getDb(), details, "get_playlist_items", {
+                                metadataStatus: "ok",
+                                transcriptStatus: "ok",
+                            });
+                        }
                     }
                     catch (err) {
                         process.stderr.write(`youtube-mcp: DB upsert failed (transcript) for ${videoId}: ${err}\n`);
@@ -146,6 +167,21 @@ export function registerGetPlaylistItemsTool(server) {
                     }
                     transcriptReason = message;
                     process.stderr.write(`youtube-mcp: transcript fetch ${transcriptStatus} for ${videoId}: ${message}\n`);
+                    // Map tool-layer status to DB-persisted value via shared utility
+                    const dbTxStatus = toDbTranscriptStatus(transcriptStatus);
+                    const details = detailsMap.get(videoId);
+                    if (details) {
+                        try {
+                            upsertVideo(getDb(), details, "get_playlist_items", {
+                                metadataStatus: "ok",
+                                transcriptStatus: dbTxStatus,
+                                transcriptReason: message,
+                            });
+                        }
+                        catch (upsertErr) {
+                            process.stderr.write(`youtube-mcp: DB upsert failed (transcript status) for ${videoId}: ${upsertErr}\n`);
+                        }
+                    }
                 }
                 hydrationOutcomes.push({
                     videoId,

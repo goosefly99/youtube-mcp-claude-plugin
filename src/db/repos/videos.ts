@@ -1,12 +1,12 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { VideoSearchResult, VideoDetails } from "../../types.js";
 import type { VideoRow } from "../types.js";
-import type { MetadataStatus, TranscriptStatus } from "../../types/status.js";
+import type { MetadataStatus, TranscriptDbStatus } from "../../types/status.js";
 import { withTransaction } from "../connection.js";
 
 export interface VideoStatusOpts {
   metadataStatus?: MetadataStatus | null;
-  transcriptStatus?: TranscriptStatus | null;
+  transcriptStatus?: TranscriptDbStatus | null;
   transcriptReason?: string | null;
 }
 
@@ -75,6 +75,10 @@ export function upsertVideo(
   ).run({
     video_id: video.videoId,
     title: video.title ?? null,
+    // TODO(follow-up): VideoDetails (src/types.ts) lacks a channelId field so channel_id
+    // is always stored as null. To fix: add channelId to VideoDetails, populate it in
+    // videoBatchFetcher.ts from the snippet.channelId API field, then change this to:
+    //   channel_id: video.channelId ?? null
     channel_id: null,
     channel_title: video.channelTitle ?? null,
     description: video.description ?? null,
