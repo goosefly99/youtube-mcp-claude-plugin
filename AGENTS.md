@@ -71,7 +71,37 @@ Hydration statuses (N items):
 ...
 ```
 
+## Quota budget — videos.list batching (Y1)
+
+`get_playlist_items` (hydrate path) and `get_video_details` (single-video path)
+both use `batchFetchVideoDetails` from `src/services/videoBatchFetcher.ts`.
+
+Each `videos.list` call costs **1 quota unit** regardless of how many IDs are
+passed (up to the API maximum of 50). Batching 50 IDs per call is therefore
+always quota-optimal.
+
+| Playlist size N | `videos.list` calls | Formula        |
+|-----------------|---------------------|----------------|
+| 1               | 1                   | ceil(1 / 50)   |
+| 50              | 1                   | ceil(50 / 50)  |
+| 51              | 2                   | ceil(51 / 50)  |
+| 120             | 3                   | ceil(120 / 50) |
+| 500 (max)       | 10                  | ceil(500 / 50) |
+
+Transcript fetches (InnerTube) remain **1 network call per video** — they are
+not batchable. Total quota cost for a playlist hydration of N videos:
+
+- YouTube Data API v3: `ceil(N / 50)` quota units (videos.list)
+- playlistItems.list paging: `ceil(N / 50)` quota units (independent of hydration)
+- InnerTube transcript: 2 requests per video (player endpoint + caption XML), no quota deducted
+
 ## Build
 
 Run `npm run build` after any change. All TypeScript errors must be resolved
 before reporting work complete.
+
+## Testing
+
+Run `npm test` to execute the test suite via Node.js built-in `node:test`.
+Tests are compiled to `dist/tests/` as part of `npm run build`.
+No third-party test framework is required.

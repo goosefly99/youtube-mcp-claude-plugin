@@ -1,6 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { getVideoDetails } from "../services/youtube-api.js";
+import { parseVideoId } from "../services/youtube-api.js";
+import { batchFetchVideoDetails } from "../services/videoBatchFetcher.js";
 import { fetchTranscript } from "../services/transcript.js";
 import { getDb } from "../db/connection.js";
 import { upsertVideo } from "../db/repos/videos.js";
@@ -36,7 +37,12 @@ export async function fetchAndStoreVideo(
   includeTranscript: boolean
 ): Promise<FetchVideoOutcome> {
   // 1. Metadata (required — throws on failure so the top-level tool can surface it)
-  const details = await getVideoDetails(videoId);
+  const id = parseVideoId(videoId);
+  const batchResults = await batchFetchVideoDetails([id]);
+  if (batchResults.length === 0) {
+    throw new Error(`Video not found: ${id}`);
+  }
+  const details = batchResults[0];
   const resolvedVideoId = details.videoId;
 
   try {
