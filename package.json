@@ -1,6 +1,6 @@
 {
   "name": "youtube-mcp",
-  "version": "1.0.0",
+  "version": "0.5.0",
   "description": "MCP server for YouTube search, transcripts, and video analysis",
   "type": "module",
   "main": "dist/index.js",
