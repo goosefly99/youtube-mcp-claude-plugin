@@ -9,6 +9,7 @@ import { upsertTranscript } from "../db/repos/transcripts.js";
 import type { VideoDetails } from "../types.js";
 import type { ToolTranscriptStatus } from "../types/status.js";
 import { toDbTranscriptStatus } from "../types/status.js";
+import { classifyTranscriptError } from "../services/transcriptClassifier.js";
 
 // ToolTranscriptStatus (from types/status.ts) extends the DB-level type with
 // "unavailable" and "skipped" — tool-layer states mapped before DB persistence.
@@ -25,7 +26,7 @@ export interface FetchVideoOutcome {
  * Consolidated fetch for a single video: metadata + optional transcript in one call.
  *
  * Partial success is NOT a failure: if metadata succeeds but the transcript
- * cannot be retrieved (no captions, disabled, network error), the video row is
+ * cannot be retrieved (missing captions, network error, etc.), the video row is
  * still upserted and the transcript status reflects the reason. Only a hard
  * metadata failure propagates as a thrown error — callers should surface that
  * to the user.
@@ -84,24 +85,7 @@ export async function fetchAndStoreVideo(
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    const lower = message.toLowerCase();
-
-    let tStatus: ToolTranscriptStatus;
-    if (
-      lower.includes("no captions") ||
-      lower.includes("captions disabled") ||
-      lower.includes("not available") ||
-      lower.includes("http 404")
-    ) {
-      tStatus = "missing";
-    } else if (
-      lower.includes("transcripts disabled") ||
-      lower.includes("captions are disabled")
-    ) {
-      tStatus = "unavailable";
-    } else {
-      tStatus = "failed";
-    }
+    const { status: tStatus, reason } = classifyTranscriptError(err);
 
     // Map tool-layer status to DB-persisted value via shared utility
     const dbTranscriptStatus = toDbTranscriptStatus(tStatus);
@@ -126,7 +110,7 @@ export async function fetchAndStoreVideo(
       details,
       metadata: "ok",
       transcript: tStatus,
-      transcriptReason: message,
+      transcriptReason: reason ?? message,
     };
   }
 }

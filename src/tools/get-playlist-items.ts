@@ -10,6 +10,7 @@ import { upsertTranscript } from "../db/repos/transcripts.js";
 import type { FetchVideoOutcome } from "./get-video-details.js";
 import type { ToolTranscriptStatus } from "../types/status.js";
 import { toDbTranscriptStatus } from "../types/status.js";
+import { classifyTranscriptError } from "../services/transcriptClassifier.js";
 
 /**
  * Transcript fetches in the hydrate pass are deliberately serial (concurrency=1)
@@ -229,23 +230,9 @@ export function registerGetPlaylistItemsTool(server: McpServer): void {
             transcriptStatus = "ok";
           } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
-            const lower = message.toLowerCase();
-            if (
-              lower.includes("no captions") ||
-              lower.includes("captions disabled") ||
-              lower.includes("not available") ||
-              lower.includes("http 404")
-            ) {
-              transcriptStatus = "missing";
-            } else if (
-              lower.includes("transcripts disabled") ||
-              lower.includes("captions are disabled")
-            ) {
-              transcriptStatus = "unavailable";
-            } else {
-              transcriptStatus = "failed";
-            }
-            transcriptReason = message;
+            const classification = classifyTranscriptError(err);
+            transcriptStatus = classification.status;
+            transcriptReason = classification.reason ?? message;
             process.stderr.write(
               `youtube-mcp: transcript fetch ${transcriptStatus} for ${videoId}: ${message}\n`
             );
