@@ -6,33 +6,48 @@ import { getDb } from "../db/connection.js";
 import { upsertVideo } from "../db/repos/videos.js";
 import { upsertTranscript } from "../db/repos/transcripts.js";
 import { toDbTranscriptStatus } from "../types/status.js";
+import { classifyTranscriptError } from "../services/transcriptClassifier.js";
 /**
  * Consolidated fetch for a single video: metadata + optional transcript in one call.
  *
  * Partial success is NOT a failure: if metadata succeeds but the transcript
- * cannot be retrieved (no captions, disabled, network error), the video row is
+ * cannot be retrieved (missing captions, network error, etc.), the video row is
  * still upserted and the transcript status reflects the reason. Only a hard
  * metadata failure propagates as a thrown error — callers should surface that
  * to the user.
+ *
+ * Callers that have already batch-fetched metadata (playlist hydrate loop)
+ * SHOULD pass `opts.preFetchedDetails` to avoid issuing an extra videos.list
+ * call per video. This is what reunifies the playlist hydrate path through
+ * this function while preserving the 2*ceil(N/50) quota invariant.
  */
-export async function fetchAndStoreVideo(videoId, includeTranscript) {
-    // 1. Metadata (required — throws on failure so the top-level tool can surface it)
-    const id = parseVideoId(videoId);
-    const { details: detailsMap, failures } = await batchFetchVideoDetails([id]);
-    if (failures.length > 0) {
-        throw new Error(failures[0].reason);
+export async function fetchAndStoreVideo(videoId, includeTranscript, opts = {}) {
+    const source = opts.source ?? "get_video_details";
+    const transcriptFetcher = opts.transcriptFetcher ?? fetchTranscript;
+    let details;
+    if (opts.preFetchedDetails) {
+        // Caller supplied metadata — do NOT issue a videos.list call.
+        details = opts.preFetchedDetails;
     }
-    if (!detailsMap.has(id)) {
-        throw new Error(`Video not found: ${id}`);
+    else {
+        // 1. Metadata (required — throws on failure so the top-level tool can surface it)
+        const id = parseVideoId(videoId);
+        const { details: detailsMap, failures } = await batchFetchVideoDetails([id]);
+        if (failures.length > 0) {
+            throw new Error(failures[0].reason);
+        }
+        if (!detailsMap.has(id)) {
+            throw new Error(`Video not found: ${id}`);
+        }
+        details = detailsMap.get(id);
     }
-    const details = detailsMap.get(id);
     const resolvedVideoId = details.videoId;
     if (!includeTranscript) {
         try {
-            upsertVideo(getDb(), details, "get_video_details", { metadataStatus: "ok" });
+            upsertVideo(getDb(), details, source, { metadataStatus: "ok" });
         }
         catch (err) {
-            process.stderr.write(`youtube-mcp: DB upsert failed (get_video_details): ${err}\n`);
+            process.stderr.write(`youtube-mcp: DB upsert failed (${source}): ${err}\n`);
         }
         return {
             videoId: resolvedVideoId,
@@ -43,16 +58,16 @@ export async function fetchAndStoreVideo(videoId, includeTranscript) {
     }
     // 2. Transcript (best-effort — classify errors, never fail the whole call)
     try {
-        const transcript = await fetchTranscript(resolvedVideoId);
+        const transcript = await transcriptFetcher(resolvedVideoId);
         try {
-            upsertVideo(getDb(), details, "get_video_details", {
+            upsertVideo(getDb(), details, source, {
                 metadataStatus: "ok",
                 transcriptStatus: "ok",
             });
             upsertTranscript(getDb(), transcript);
         }
         catch (err) {
-            process.stderr.write(`youtube-mcp: DB upsert failed (get_video_details transcript): ${err}\n`);
+            process.stderr.write(`youtube-mcp: DB upsert failed (${source} transcript): ${err}\n`);
         }
         return {
             videoId: resolvedVideoId,
@@ -63,32 +78,18 @@ export async function fetchAndStoreVideo(videoId, includeTranscript) {
     }
     catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        const lower = message.toLowerCase();
-        let tStatus;
-        if (lower.includes("no captions") ||
-            lower.includes("captions disabled") ||
-            lower.includes("not available") ||
-            lower.includes("http 404")) {
-            tStatus = "missing";
-        }
-        else if (lower.includes("transcripts disabled") ||
-            lower.includes("captions are disabled")) {
-            tStatus = "unavailable";
-        }
-        else {
-            tStatus = "failed";
-        }
+        const { status: tStatus, reason } = classifyTranscriptError(err);
         // Map tool-layer status to DB-persisted value via shared utility
         const dbTranscriptStatus = toDbTranscriptStatus(tStatus);
         try {
-            upsertVideo(getDb(), details, "get_video_details", {
+            upsertVideo(getDb(), details, source, {
                 metadataStatus: "ok",
                 transcriptStatus: dbTranscriptStatus,
                 transcriptReason: message,
             });
         }
         catch (upsertErr) {
-            process.stderr.write(`youtube-mcp: DB upsert failed (get_video_details): ${upsertErr}\n`);
+            process.stderr.write(`youtube-mcp: DB upsert failed (${source}): ${upsertErr}\n`);
         }
         process.stderr.write(`youtube-mcp: transcript fetch ${tStatus} for ${resolvedVideoId}: ${message}\n`);
         return {
@@ -96,7 +97,7 @@ export async function fetchAndStoreVideo(videoId, includeTranscript) {
             details,
             metadata: "ok",
             transcript: tStatus,
-            transcriptReason: message,
+            transcriptReason: reason ?? message,
         };
     }
 }

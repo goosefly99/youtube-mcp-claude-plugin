@@ -35,6 +35,7 @@ export async function fetchVideoBatch(ids) {
     return items.map((item) => ({
         videoId: item.id,
         title: item.snippet.title,
+        channelId: item.snippet?.channelId ?? null,
         channelTitle: item.snippet.channelTitle,
         description: item.snippet.description,
         publishedAt: item.snippet.publishedAt,

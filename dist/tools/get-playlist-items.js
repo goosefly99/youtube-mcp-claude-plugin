@@ -4,15 +4,28 @@ import { getDb } from "../db/connection.js";
 import { upsertPlaylistItems } from "../db/repos/playlists.js";
 import { upsertVideo } from "../db/repos/videos.js";
 import { batchFetchVideoDetails } from "../services/videoBatchFetcher.js";
-import { fetchTranscript } from "../services/transcript.js";
-import { upsertTranscript } from "../db/repos/transcripts.js";
-import { toDbTranscriptStatus } from "../types/status.js";
+import { fetchAndStoreVideo } from "./get-video-details.js";
 /**
  * Transcript fetches in the hydrate pass are deliberately serial (concurrency=1)
  * to avoid hammering InnerTube. This constant documents the intent and makes it
  * easy to find if the policy changes.
  */
 export const HYDRATE_TRANSCRIPT_CONCURRENCY = 1;
+/**
+ * Build the additive summary block for a hydrated playlist response.
+ *
+ * Downstream orchestrator skills may still rely on the existing text output;
+ * this summary is additive only.
+ */
+export function buildPlaylistSummary(outcomes) {
+    return {
+        total: outcomes.length,
+        metadataOk: outcomes.filter((o) => o.metadata === "ok").length,
+        transcriptOk: outcomes.filter((o) => o.transcript === "ok").length,
+        transcriptMissing: outcomes.filter((o) => o.transcript === "missing").length,
+        transcriptFailed: outcomes.filter((o) => o.transcript === "failed").length,
+    };
+}
 export function registerGetPlaylistItemsTool(server) {
     server.tool("get_playlist_items", "Canonical playlist fetch entrypoint. Fetches all videos from a YouTube playlist by its ID. With hydrate=true (default), sequentially fetches and upserts metadata + transcript for every item via get_video_details. With hydrate=false, behaves as a list-only operation. Requires OAuth credentials (YOUTUBE_OAUTH_TOKEN_PATH).", {
         playlistId: z
@@ -124,7 +137,13 @@ export function registerGetPlaylistItemsTool(server) {
                     }
                 }
             }
-            // Step 2: per-video transcript fetch — serial (HYDRATE_TRANSCRIPT_CONCURRENCY=1) to avoid hammering InnerTube
+            // Step 2: per-video transcript fetch via fetchAndStoreVideo — serial
+            // (HYDRATE_TRANSCRIPT_CONCURRENCY=1) to avoid hammering InnerTube.
+            //
+            // We delegate to fetchAndStoreVideo with preFetchedDetails so the
+            // helper does NOT issue an additional videos.list call per video.
+            // This preserves the 2*ceil(N/50) quota formula (1 playlistItems.list +
+            // 1 videos.list batch per 50 items, no per-video videos.list).
             for (const videoId of videoIds) {
                 if (metadataFailures.has(videoId)) {
                     hydrationOutcomes.push({
@@ -135,65 +154,26 @@ export function registerGetPlaylistItemsTool(server) {
                     });
                     continue;
                 }
-                let transcriptStatus = "skipped";
-                let transcriptReason;
-                try {
-                    const transcript = await fetchTranscript(videoId);
-                    try {
-                        upsertTranscript(getDb(), transcript);
-                        // Update transcript_status on the video row
-                        const details = detailsMap.get(videoId);
-                        if (details) {
-                            upsertVideo(getDb(), details, "get_playlist_items", {
-                                metadataStatus: "ok",
-                                transcriptStatus: "ok",
-                            });
-                        }
-                    }
-                    catch (err) {
-                        process.stderr.write(`youtube-mcp: DB upsert failed (transcript) for ${videoId}: ${err}\n`);
-                    }
-                    transcriptStatus = "ok";
+                const preFetchedDetails = detailsMap.get(videoId);
+                if (!preFetchedDetails) {
+                    // Should be unreachable — metadataFailures already covers missing IDs.
+                    hydrationOutcomes.push({
+                        videoId,
+                        metadata: "failed",
+                        transcript: "skipped",
+                        reason: "metadata missing from batch map",
+                    });
+                    continue;
                 }
-                catch (err) {
-                    const message = err instanceof Error ? err.message : String(err);
-                    const lower = message.toLowerCase();
-                    if (lower.includes("no captions") ||
-                        lower.includes("captions disabled") ||
-                        lower.includes("not available") ||
-                        lower.includes("http 404")) {
-                        transcriptStatus = "missing";
-                    }
-                    else if (lower.includes("transcripts disabled") ||
-                        lower.includes("captions are disabled")) {
-                        transcriptStatus = "unavailable";
-                    }
-                    else {
-                        transcriptStatus = "failed";
-                    }
-                    transcriptReason = message;
-                    process.stderr.write(`youtube-mcp: transcript fetch ${transcriptStatus} for ${videoId}: ${message}\n`);
-                    // Map tool-layer status to DB-persisted value via shared utility
-                    const dbTxStatus = toDbTranscriptStatus(transcriptStatus);
-                    const details = detailsMap.get(videoId);
-                    if (details) {
-                        try {
-                            upsertVideo(getDb(), details, "get_playlist_items", {
-                                metadataStatus: "ok",
-                                transcriptStatus: dbTxStatus,
-                                transcriptReason: message,
-                            });
-                        }
-                        catch (upsertErr) {
-                            process.stderr.write(`youtube-mcp: DB upsert failed (transcript status) for ${videoId}: ${upsertErr}\n`);
-                        }
-                    }
-                }
+                const outcome = await fetchAndStoreVideo(videoId, true, {
+                    preFetchedDetails,
+                    source: "get_playlist_items",
+                });
                 hydrationOutcomes.push({
-                    videoId,
-                    metadata: "ok",
-                    transcript: transcriptStatus,
-                    reason: transcriptReason,
+                    videoId: outcome.videoId,
+                    metadata: outcome.metadata,
+                    transcript: outcome.transcript,
+                    reason: outcome.transcriptReason,
                 });
             }
         }
@@ -227,8 +207,22 @@ export function registerGetPlaylistItemsTool(server) {
             });
             parts.push(``, `Hydration statuses (${hydrationOutcomes.length} items):`, ...statusLines);
         }
+        // Additive machine-friendly summary — downstream orchestrator skills can
+        // parse structuredContent.summary directly instead of scraping the text.
+        // Existing `content[].text` is preserved unchanged.
+        const summary = hydrate
+            ? buildPlaylistSummary(hydrationOutcomes)
+            : {
+                total: items.length,
+                metadataOk: 0,
+                transcriptOk: 0,
+                transcriptMissing: 0,
+                transcriptFailed: 0,
+            };
         return {
             content: [{ type: "text", text: parts.join("\n") }],
+            structuredContent: { summary },
+            summary,
         };
     });
 }

@@ -49,11 +49,7 @@ export function upsertVideo(db, video, source, status) {
   `).run({
         video_id: video.videoId,
         title: video.title ?? null,
-        // TODO(follow-up): VideoDetails (src/types.ts) lacks a channelId field so channel_id
-        // is always stored as null. To fix: add channelId to VideoDetails, populate it in
-        // videoBatchFetcher.ts from the snippet.channelId API field, then change this to:
-        //   channel_id: video.channelId ?? null
-        channel_id: null,
+        channel_id: video.channelId ?? null,
         channel_title: video.channelTitle ?? null,
         description: video.description ?? null,
         published_at: video.publishedAt ?? null,

@@ -102,6 +102,7 @@ export async function getVideoDetails(videoId) {
     return {
         videoId: item.id,
         title: item.snippet.title,
+        channelId: item.snippet?.channelId ?? null,
         channelTitle: item.snippet.channelTitle,
         description: item.snippet.description,
         publishedAt: item.snippet.publishedAt,
