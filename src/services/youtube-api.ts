@@ -135,6 +135,7 @@ export async function getVideoDetails(
     id: string;
     snippet: {
       title: string;
+      channelId?: string;
       channelTitle: string;
       description: string;
       publishedAt: string;
@@ -160,6 +161,7 @@ export async function getVideoDetails(
   return {
     videoId: item.id,
     title: item.snippet.title,
+    channelId: item.snippet?.channelId ?? null,
     channelTitle: item.snippet.channelTitle,
     description: item.snippet.description,
     publishedAt: item.snippet.publishedAt,

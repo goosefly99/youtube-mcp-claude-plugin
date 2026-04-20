@@ -12,6 +12,7 @@ export interface VideoSearchResult {
 export interface VideoDetails {
   videoId: string;
   title: string;
+  channelId: string | null;
   channelTitle: string;
   description: string;
   publishedAt: string;

@@ -53,6 +53,7 @@ export async function fetchVideoBatch(ids: string[]): Promise<VideoDetails[]> {
     id: string;
     snippet: {
       title: string;
+      channelId?: string;
       channelTitle: string;
       description: string;
       publishedAt: string;
@@ -73,6 +74,7 @@ export async function fetchVideoBatch(ids: string[]): Promise<VideoDetails[]> {
   return items.map((item) => ({
     videoId: item.id,
     title: item.snippet.title,
+    channelId: item.snippet?.channelId ?? null,
     channelTitle: item.snippet.channelTitle,
     description: item.snippet.description,
     publishedAt: item.snippet.publishedAt,

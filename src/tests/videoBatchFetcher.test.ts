@@ -13,6 +13,7 @@ function makeFakeDetails(id: string): VideoDetails {
   return {
     videoId: id,
     title: `Title ${id}`,
+    channelId: null,
     channelTitle: "Test Channel",
     description: "",
     publishedAt: "2024-01-01T00:00:00Z",
