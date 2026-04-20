@@ -2,10 +2,11 @@
  * Pinned fixture test for video id aDWJ6lLemJU — a known no-transcript case.
  *
  * Acceptance criteria:
- *   1. With fetchTranscript mocked to throw "No captions available",
+ *   1. With the transcriptFetcher mocked to throw "No captions available",
  *      fetchAndStoreVideo('aDWJ6lLemJU', true) returns transcript='missing'
  *      and the DB row's transcript_status = 'missing'.
- *   2. classifyTranscriptError is invoked exactly once (no internal retry).
+ *   2. The transcript fetcher is invoked exactly once — i.e. fetchAndStoreVideo
+ *      does not retry the transcript fetch internally.
  */
 import { describe, it, before } from "node:test";
 import assert from "node:assert/strict";
@@ -24,7 +25,6 @@ process.env.YOUTUBE_MCP_DB_PATH = tmpDbPath;
 const { initSchema } = await import("../db/schema.js");
 const { getDb } = await import("../db/connection.js");
 const { fetchAndStoreVideo } = await import("../tools/get-video-details.js");
-const classifierModule = await import("../services/transcriptClassifier.js");
 import type { VideoDetails, Transcript } from "../types.js";
 
 function makeDetails(id: string): VideoDetails {
@@ -50,46 +50,35 @@ describe("aDWJ6lLemJU pinned no-transcript fixture", () => {
 
   it("classifies 'No captions available' as missing and persists transcript_status='missing'", async () => {
     const videoId = "aDWJ6lLemJU";
-    let classifierCalls = 0;
-    const realClassify = classifierModule.classifyTranscriptError;
 
-    const spyTranscriptFetcher = async (_id: string): Promise<Transcript> => {
+    // Count transcript-fetcher invocations directly. The real invariant we want
+    // to pin is "fetchAndStoreVideo does not retry the transcript fetch" —
+    // measuring the fetcher itself is the correct observation point. (A prior
+    // version of this test counted a wrapper around classifyTranscriptError,
+    // but that only observed the proxy's own call, not fetchAndStoreVideo's
+    // catch-block invocation at get-video-details.ts:129 — so it could never
+    // have detected a retry.)
+    let transcriptFetcherCalls = 0;
+    const transcriptFetcher = async (_id: string): Promise<Transcript> => {
+      transcriptFetcherCalls += 1;
       throw new Error("No captions available");
-    };
-
-    // Wrap classifier to count invocations via a proxy transcriptFetcher
-    // (simpler than module-mocking). The actual classification still runs
-    // inside fetchAndStoreVideo.
-    const proxiedFetcher = async (id: string) => {
-      try {
-        return await spyTranscriptFetcher(id);
-      } catch (err) {
-        classifierCalls++;
-        const result = realClassify(err);
-        // Re-throw the original error so fetchAndStoreVideo's catch
-        // classifies it again — we are effectively asserting that the
-        // downstream classification is deterministic (drift-guard).
-        void result;
-        throw err;
-      }
     };
 
     const outcome = await fetchAndStoreVideo(videoId, true, {
       preFetchedDetails: makeDetails(videoId),
       source: "get_video_details",
-      transcriptFetcher: proxiedFetcher,
+      transcriptFetcher,
     });
 
     assert.strictEqual(outcome.videoId, videoId);
     assert.strictEqual(outcome.metadata, "ok");
     assert.strictEqual(outcome.transcript, "missing");
 
-    // classifier was invoked exactly once via the proxied fetcher
-    // (fetchAndStoreVideo does NOT internally retry the transcript fetch).
+    // Transcript fetcher was invoked exactly once — proves no retry loop.
     assert.strictEqual(
-      classifierCalls,
+      transcriptFetcherCalls,
       1,
-      "classifier must be invoked exactly once — no internal retry"
+      "transcript fetcher must be invoked exactly once — no internal retry"
     );
 
     const row = getDb()
