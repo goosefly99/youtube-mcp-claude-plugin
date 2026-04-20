@@ -6,10 +6,13 @@ import { fetchTranscript } from "../services/transcript.js";
 import { getDb } from "../db/connection.js";
 import { upsertVideo } from "../db/repos/videos.js";
 import { upsertTranscript } from "../db/repos/transcripts.js";
-import type { VideoDetails } from "../types.js";
+import type { VideoDetails, Transcript } from "../types.js";
 import type { ToolTranscriptStatus } from "../types/status.js";
 import { toDbTranscriptStatus } from "../types/status.js";
 import { classifyTranscriptError } from "../services/transcriptClassifier.js";
+
+/** Signature for the optional transcript fetcher override (test seam). */
+export type TranscriptFetcher = (videoId: string) => Promise<Transcript>;
 
 // ToolTranscriptStatus (from types/status.ts) extends the DB-level type with
 // "unavailable" and "skipped" — tool-layer states mapped before DB persistence.
@@ -22,6 +25,28 @@ export interface FetchVideoOutcome {
   transcriptReason?: string;
 }
 
+export interface FetchAndStoreOpts {
+  /**
+   * Pre-fetched VideoDetails. When provided, fetchAndStoreVideo SKIPS its own
+   * videos.list call and uses the supplied details. This lets batch callers
+   * (e.g. the playlist hydrate loop) reuse a single batched videos.list result
+   * across many videos without violating the 2*ceil(N/50) quota formula.
+   */
+  preFetchedDetails?: VideoDetails;
+  /**
+   * Source tag written to the `videos.source` DB column. Defaults to
+   * "get_video_details" to preserve the historical behavior for the single-
+   * video tool call site.
+   */
+  source?: string;
+  /**
+   * Optional override for the transcript fetcher. Defaults to the production
+   * fetchTranscript. Provided as a test seam so unit tests can inject a mock
+   * without depending on module-mocking experimental flags.
+   */
+  transcriptFetcher?: TranscriptFetcher;
+}
+
 /**
  * Consolidated fetch for a single video: metadata + optional transcript in one call.
  *
@@ -30,29 +55,45 @@ export interface FetchVideoOutcome {
  * still upserted and the transcript status reflects the reason. Only a hard
  * metadata failure propagates as a thrown error — callers should surface that
  * to the user.
+ *
+ * Callers that have already batch-fetched metadata (playlist hydrate loop)
+ * SHOULD pass `opts.preFetchedDetails` to avoid issuing an extra videos.list
+ * call per video. This is what reunifies the playlist hydrate path through
+ * this function while preserving the 2*ceil(N/50) quota invariant.
  */
 export async function fetchAndStoreVideo(
   videoId: string,
-  includeTranscript: boolean
+  includeTranscript: boolean,
+  opts: FetchAndStoreOpts = {}
 ): Promise<FetchVideoOutcome> {
-  // 1. Metadata (required — throws on failure so the top-level tool can surface it)
-  const id = parseVideoId(videoId);
-  const { details: detailsMap, failures } = await batchFetchVideoDetails([id]);
-  if (failures.length > 0) {
-    throw new Error(failures[0].reason);
+  const source = opts.source ?? "get_video_details";
+  const transcriptFetcher: TranscriptFetcher = opts.transcriptFetcher ?? fetchTranscript;
+  let details: VideoDetails;
+
+  if (opts.preFetchedDetails) {
+    // Caller supplied metadata — do NOT issue a videos.list call.
+    details = opts.preFetchedDetails;
+  } else {
+    // 1. Metadata (required — throws on failure so the top-level tool can surface it)
+    const id = parseVideoId(videoId);
+    const { details: detailsMap, failures } = await batchFetchVideoDetails([id]);
+    if (failures.length > 0) {
+      throw new Error(failures[0].reason);
+    }
+    if (!detailsMap.has(id)) {
+      throw new Error(`Video not found: ${id}`);
+    }
+    details = detailsMap.get(id)!;
   }
-  if (!detailsMap.has(id)) {
-    throw new Error(`Video not found: ${id}`);
-  }
-  const details = detailsMap.get(id)!;
+
   const resolvedVideoId = details.videoId;
 
   if (!includeTranscript) {
     try {
-      upsertVideo(getDb(), details, "get_video_details", { metadataStatus: "ok" });
+      upsertVideo(getDb(), details, source, { metadataStatus: "ok" });
     } catch (err) {
       process.stderr.write(
-        `youtube-mcp: DB upsert failed (get_video_details): ${err}\n`
+        `youtube-mcp: DB upsert failed (${source}): ${err}\n`
       );
     }
     return {
@@ -65,16 +106,16 @@ export async function fetchAndStoreVideo(
 
   // 2. Transcript (best-effort — classify errors, never fail the whole call)
   try {
-    const transcript = await fetchTranscript(resolvedVideoId);
+    const transcript = await transcriptFetcher(resolvedVideoId);
     try {
-      upsertVideo(getDb(), details, "get_video_details", {
+      upsertVideo(getDb(), details, source, {
         metadataStatus: "ok",
         transcriptStatus: "ok",
       });
       upsertTranscript(getDb(), transcript);
     } catch (err) {
       process.stderr.write(
-        `youtube-mcp: DB upsert failed (get_video_details transcript): ${err}\n`
+        `youtube-mcp: DB upsert failed (${source} transcript): ${err}\n`
       );
     }
     return {
@@ -90,14 +131,14 @@ export async function fetchAndStoreVideo(
     // Map tool-layer status to DB-persisted value via shared utility
     const dbTranscriptStatus = toDbTranscriptStatus(tStatus);
     try {
-      upsertVideo(getDb(), details, "get_video_details", {
+      upsertVideo(getDb(), details, source, {
         metadataStatus: "ok",
         transcriptStatus: dbTranscriptStatus,
         transcriptReason: message,
       });
     } catch (upsertErr) {
       process.stderr.write(
-        `youtube-mcp: DB upsert failed (get_video_details): ${upsertErr}\n`
+        `youtube-mcp: DB upsert failed (${source}): ${upsertErr}\n`
       );
     }
 
