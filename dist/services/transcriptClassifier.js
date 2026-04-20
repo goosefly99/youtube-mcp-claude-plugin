@@ -16,6 +16,9 @@
  *
  * "missing" is a terminal verdict: the source lacks captions, do not retry.
  * "failed" is transient: callers MAY retry with backoff (no backoff is enforced here).
+ *
+ * @see docs/transcript-retry-semantics.md for the per-status retry rules
+ *      that consumers of the classifier output must respect.
  */
 export function classifyTranscriptError(err) {
     const message = err instanceof Error ? err.message : String(err ?? "");
