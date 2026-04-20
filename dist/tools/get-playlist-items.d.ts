@@ -10,6 +10,8 @@ export declare const HYDRATE_TRANSCRIPT_CONCURRENCY = 1;
  * Machine-friendly summary of a hydrated playlist response.
  * Emitted as an additive top-level field in the get_playlist_items response
  * (see docs/transcript-retry-semantics.md for retry rules).
+ *
+ * @internal — exported for unit testing only.
  */
 export interface PlaylistHydrationSummary {
     total: number;
@@ -18,6 +20,9 @@ export interface PlaylistHydrationSummary {
     transcriptMissing: number;
     transcriptFailed: number;
 }
+/**
+ * @internal — exported for unit testing only.
+ */
 export interface HydrationOutcome {
     videoId: string;
     metadata: "ok" | "failed";
@@ -29,6 +34,8 @@ export interface HydrationOutcome {
  *
  * Downstream orchestrator skills may still rely on the existing text output;
  * this summary is additive only.
+ *
+ * @internal — exported for unit testing only.
  */
 export declare function buildPlaylistSummary(outcomes: HydrationOutcome[]): PlaylistHydrationSummary;
 export declare function registerGetPlaylistItemsTool(server: McpServer): void;

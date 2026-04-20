@@ -16,6 +16,8 @@ export const HYDRATE_TRANSCRIPT_CONCURRENCY = 1;
  *
  * Downstream orchestrator skills may still rely on the existing text output;
  * this summary is additive only.
+ *
+ * @internal — exported for unit testing only.
  */
 export function buildPlaylistSummary(outcomes) {
     return {
