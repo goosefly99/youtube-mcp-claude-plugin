@@ -73,6 +73,26 @@ of:
 Metadata status is `ok` or `failed`. A `metadata: failed` always throws at the
 tool boundary — it is never silently swallowed.
 
+## Consumer-side every-call stderr capture (R1 mitigation)
+
+Callers MUST tee the youtube-mcp server's stderr to a log file per request —
+never fire-and-forget. v0.5.0 narrowed the transcript-error classifier so
+that only `no captions` / `captions disabled` / `http 404` route to
+`missing` and all other phrases land in `failed`; the free-text stderr line
+emitted alongside `failed` is the caller's only signal to distinguish
+"YouTube upstream hiccup, retry later" from "permanent classification
+miss, inspect the fixture". Dropping stderr also blinds consumers to the
+hydrate-loop's `fetchAndStoreVideo(..., {preFetchedDetails, source})`
+quota-invariant logging — under the `HYDRATE_TRANSCRIPT_CONCURRENCY=1`
+serial order, a missing stderr log is the first sign that the
+`2*ceil(N/50)` quota budget is being violated.
+
+The `data-etl-orchestrator`'s probe 4 enforces this invariant at
+preflight: the 100 ms stderr deadline in assertion (d) only surfaces a
+silent-DB-failure signal if the caller is actually reading stderr.
+Direct callers bypassing the orchestrator must replicate the stderr-tee
+discipline.
+
 ## Output shapes
 
 `get_video_details` appends:

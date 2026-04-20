@@ -58,6 +58,17 @@ To obtain a key:
 
 Copy `.env.example` to `.env` and set `YOUTUBE_API_KEY`, or pass the variable through your MCP client's environment configuration. The server exits at startup if the key is missing.
 
+## Ecosystem version floor
+
+This plugin ships as **v0.5.0** as part of the v0.3.0 sibling ecosystem drop
+(kb 0.6.0 + yt 0.5.0 + x-api 0.4.0). The `data-etl-orchestrator` contract
+probe (probe 4, ensemble-contract) refuses to dispatch unless
+`youtube-mcp >= 0.5.0`. If you pin an older version, the orchestrator will
+emit a structured upgrade message telling the user to install v0.5.0.
+See `skills/references/contract-probe-protocol.md` in the orchestrator
+repo for the full probe. Consumer-side every-call stderr capture
+requirements are documented in `AGENTS.md`.
+
 ## Development
 
 Source lives under `src/` (TypeScript, ESM, Node16 module resolution). To modify:
