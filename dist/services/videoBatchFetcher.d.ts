@@ -14,6 +14,16 @@ import type { VideoDetails } from "../types.js";
 export declare const BATCH_SIZE = 50;
 /** Signature for the function that performs one `videos.list` network call. */
 export type VideoListFetcher = (ids: string[]) => Promise<VideoDetails[]>;
+/** Result shape returned by batchFetchVideoDetails. */
+export interface BatchFetchResult {
+    /** Map from videoId → VideoDetails for all successfully fetched videos. */
+    details: Map<string, VideoDetails>;
+    /** One entry per chunk that threw, listing the IDs in that chunk and the error reason. */
+    failures: Array<{
+        videoIds: string[];
+        reason: string;
+    }>;
+}
 /**
  * Default implementation: calls the YouTube Data API v3 `videos.list` endpoint
  * with part=snippet,contentDetails,statistics for the given IDs.
@@ -23,10 +33,13 @@ export declare function fetchVideoBatch(ids: string[]): Promise<VideoDetails[]>;
  * Fetch VideoDetails for a list of video IDs, issuing one `videos.list` call
  * per chunk of up to BATCH_SIZE (50) IDs.
  *
+ * Per-chunk failures are isolated: a chunk that throws is recorded in the
+ * returned `failures` array while successfully completed chunks are still
+ * present in the returned `details` Map. The caller decides how to handle
+ * partial failures.
+ *
  * @param videoIds  List of bare YouTube video IDs.
  * @param fetcher   Optional override for the batch API call (used in tests).
- * @returns         Flat array of VideoDetails in the same order as input IDs.
- *                  Videos not returned by the API (e.g. deleted) are silently
- *                  absent from the result.
+ * @returns         `{ details, failures }` — see BatchFetchResult.
  */
-export declare function batchFetchVideoDetails(videoIds: string[], fetcher?: VideoListFetcher): Promise<VideoDetails[]>;
+export declare function batchFetchVideoDetails(videoIds: string[], fetcher?: VideoListFetcher): Promise<BatchFetchResult>;

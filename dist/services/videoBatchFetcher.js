@@ -11,6 +11,7 @@
  * of `videos.list` calls is ceil(N / 50).
  */
 import { config } from "../config.js";
+import { parseDuration } from "./youtube-api.js";
 export const BATCH_SIZE = 50;
 /**
  * Default implementation: calls the YouTube Data API v3 `videos.list` endpoint
@@ -53,30 +54,33 @@ export async function fetchVideoBatch(ids) {
  * Fetch VideoDetails for a list of video IDs, issuing one `videos.list` call
  * per chunk of up to BATCH_SIZE (50) IDs.
  *
+ * Per-chunk failures are isolated: a chunk that throws is recorded in the
+ * returned `failures` array while successfully completed chunks are still
+ * present in the returned `details` Map. The caller decides how to handle
+ * partial failures.
+ *
  * @param videoIds  List of bare YouTube video IDs.
  * @param fetcher   Optional override for the batch API call (used in tests).
- * @returns         Flat array of VideoDetails in the same order as input IDs.
- *                  Videos not returned by the API (e.g. deleted) are silently
- *                  absent from the result.
+ * @returns         `{ details, failures }` — see BatchFetchResult.
  */
 export async function batchFetchVideoDetails(videoIds, fetcher = fetchVideoBatch) {
+    const details = new Map();
+    const failures = [];
     if (videoIds.length === 0)
-        return [];
-    const results = [];
+        return { details, failures };
     for (let offset = 0; offset < videoIds.length; offset += BATCH_SIZE) {
         const chunk = videoIds.slice(offset, offset + BATCH_SIZE);
-        const batchResults = await fetcher(chunk);
-        results.push(...batchResults);
+        try {
+            const batchResults = await fetcher(chunk);
+            for (const item of batchResults) {
+                details.set(item.videoId, item);
+            }
+        }
+        catch (err) {
+            const reason = err instanceof Error ? err.message : String(err);
+            failures.push({ videoIds: chunk, reason });
+        }
     }
-    return results;
-}
-function parseDuration(iso) {
-    const match = iso.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
-    if (!match)
-        return iso;
-    const h = match[1] ? `${match[1]}h ` : "";
-    const m = match[2] ? `${match[2]}m ` : "";
-    const s = match[3] ? `${match[3]}s` : "";
-    return (h + m + s).trim() || "0s";
+    return { details, failures };
 }
 //# sourceMappingURL=videoBatchFetcher.js.map

@@ -19,6 +19,9 @@ export interface VideoRow {
     tags_json: string | null;
     source: string | null;
     saved_at: string;
+    metadata_status: string | null;
+    transcript_status: string | null;
+    transcript_reason: string | null;
 }
 export interface TranscriptRow {
     video_id: string;

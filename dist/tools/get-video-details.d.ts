@@ -1,11 +1,11 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { VideoDetails } from "../types.js";
-export type TranscriptStatus = "ok" | "missing" | "unavailable" | "failed" | "skipped";
+import type { ToolTranscriptStatus } from "../types/status.js";
 export interface FetchVideoOutcome {
     videoId: string;
     details: VideoDetails;
     metadata: "ok" | "failed";
-    transcript: TranscriptStatus;
+    transcript: ToolTranscriptStatus;
     transcriptReason?: string;
 }
 /**
