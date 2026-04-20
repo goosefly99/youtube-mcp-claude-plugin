@@ -8,8 +8,14 @@
  *   1. fetchAndStoreVideo is invoked once per video (delegation works).
  *   2. No videos.list (batchFetchVideoDetails) calls happen during the
  *      per-video transcript pass — details are reused via preFetchedDetails.
- *      (Implicit: if the metadata path was hit, unknown test IDs would
- *      trigger a real network request and fail loudly.)
+ *      This is now asserted EXPLICITLY by spying on globalThis.fetch (which
+ *      is the only network seam batchFetchVideoDetails → fetchVideoBatch
+ *      exercises). Previously the invariant was guarded only implicitly by
+ *      the fact that unknown test IDs would 404 against the real API —
+ *      a regression in a fully-mocked CI could have silently re-introduced
+ *      per-video calls. ESM namespace exports are frozen in Node 20+, so
+ *      mock.method on the videoBatchFetcher module itself is not possible;
+ *      fetch is the nearest mutable observation point.
  *   3. Classification errors are routed through classifyTranscriptError
  *      (indirectly: a "No captions" error produces transcript_status='missing').
  *   4. API quota used by the hydrate pass = ceil(N/50) videos.list calls
@@ -19,7 +25,8 @@
  * Uses the `transcriptFetcher` test seam on fetchAndStoreVideo to inject a
  * mock transcript function without needing ESM module mocking.
  */
-import { describe, it, before } from "node:test";
+import { describe, it, before, afterEach } from "node:test";
+import { mock } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import fs from "node:fs";
@@ -70,9 +77,29 @@ describe("hydrate loop reunification (delegates to fetchAndStoreVideo)", () => {
     initSchema(db);
   });
 
+  afterEach(() => {
+    mock.restoreAll();
+  });
+
   it("delegates per-video work to fetchAndStoreVideo using preFetchedDetails (no extra videos.list calls)", async () => {
     const videoIds = ["hlv1", "hlv2", "hlv3", "hlv4"];
     const detailsMap = new Map(videoIds.map((id) => [id, makeDetails(id)]));
+
+    // Explicit spy on globalThis.fetch — the only network seam exercised by
+    // batchFetchVideoDetails → fetchVideoBatch. Any regression that drops
+    // preFetchedDetails handling and re-introduces per-video videos.list
+    // calls will now fail loudly because the spy throws, rather than
+    // relying on the implicit "real API would 404 on unknown IDs" behavior.
+    const fetchSpy = mock.method(
+      globalThis,
+      "fetch",
+      async (_input: RequestInfo | URL, _init?: RequestInit) => {
+        throw new Error(
+          "globalThis.fetch must NOT be called during the Step 2 transcript pass " +
+            "(would indicate batchFetchVideoDetails ran despite preFetchedDetails)"
+        );
+      }
+    );
 
     // Track transcript-fetcher invocations; controls mixed outcomes.
     const transcriptCalls: string[] = [];
@@ -102,14 +129,23 @@ describe("hydrate loop reunification (delegates to fetchAndStoreVideo)", () => {
     assert.deepStrictEqual(transcriptCalls, videoIds);
 
     // Assertion 3: outcomes reflect classification correctly.
-    // (Implicit proof that the metadata path was bypassed — unknown IDs
-    //  cannot resolve through the real videos.list endpoint.)
     assert.strictEqual(outcomes[0].transcript, "ok");
     assert.strictEqual(outcomes[1].transcript, "ok");
     assert.strictEqual(outcomes[2].transcript, "missing"); // classifier routed
     assert.strictEqual(outcomes[3].transcript, "failed");
 
-    // Assertion 4: DB rows carry channel_id populated from preFetchedDetails.
+    // Assertion 4 (quota invariant): zero videos.list network calls during
+    // the Step 2 transcript-fetch loop. Explicit fetch call-count check
+    // replaces the prior implicit "unknown IDs would 404 against real API"
+    // guard.
+    assert.strictEqual(
+      fetchSpy.mock.callCount(),
+      0,
+      "globalThis.fetch must not be invoked when preFetchedDetails is supplied " +
+        "(would indicate a per-video videos.list regression)"
+    );
+
+    // Assertion 5: DB rows carry channel_id populated from preFetchedDetails.
     const db = getDb();
     for (const id of videoIds) {
       const row = db
