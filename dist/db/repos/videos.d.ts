@@ -15,6 +15,29 @@ export interface QueryVideosOpts {
     offset?: number;
 }
 /**
+ * Snapshot of a video's persisted state from the perspective of "do we need
+ * to (re)fetch this video?". Used by the diff path of get_new_playlist_items.
+ *
+ * `hasVideoRow=false` means the video has never been ingested.
+ * `hasTranscriptRow=true` means a `transcripts` row exists for any language.
+ */
+export interface VideoHydrationState {
+    videoId: string;
+    hasVideoRow: boolean;
+    metadataStatus: string | null;
+    hasTranscriptRow: boolean;
+    transcriptStatus: string | null;
+}
+/**
+ * Returns the persisted hydration state for each requested videoId. Always
+ * includes one entry per input id — IDs that have no `videos` row appear with
+ * `hasVideoRow=false` so callers can drive a single diff loop.
+ *
+ * Issues a single SQL query parameterized with one placeholder per id; safe
+ * for the playlist-page volumes this codebase deals with (≤ 500 ids).
+ */
+export declare function getVideoHydrationStates(db: DatabaseSync, videoIds: string[]): Map<string, VideoHydrationState>;
+/**
  * Upserts a single video row. Accepts either a partial search result or full
  * video details — fields that are unavailable on the search result are stored
  * as NULL and filled in later if get_video_details is called for the same id.

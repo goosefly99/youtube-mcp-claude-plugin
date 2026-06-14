@@ -7,6 +7,7 @@ import { registerSummarizeVideoTool } from "./tools/summarize-video.js";
 import { registerAnalyzeVideoTool } from "./tools/analyze-video.js";
 import { registerListPlaylistsTool } from "./tools/list-playlists.js";
 import { registerGetPlaylistItemsTool } from "./tools/get-playlist-items.js";
+import { registerGetNewPlaylistItemsTool } from "./tools/get-new-playlist-items.js";
 import { registerManagePlaylistTools } from "./tools/manage-playlist.js";
 import { registerGetSavedVideosTool } from "./tools/get-saved-videos.js";
 import { registerGetSavedTranscriptsTool } from "./tools/get-saved-transcripts.js";
@@ -49,6 +50,7 @@ export function createServer() {
     if (config.oauthTokenPath) {
         registerListPlaylistsTool(server);
         registerGetPlaylistItemsTool(server);
+        registerGetNewPlaylistItemsTool(server);
         registerManagePlaylistTools(server);
         console.error("YouTube OAuth playlist tools enabled.");
     }

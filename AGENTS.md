@@ -30,6 +30,28 @@ The canonical fetch entrypoint for a **whole** playlist.
 - `hydrate=false`: list-only behavior (original thin upsert from
   `playlistItems.list`); no transcript fetch is performed.
 
+### `get_new_playlist_items(playlistId, hydrate=true)`
+The **incremental** entrypoint for a playlist — fetches only the items not
+already present in the local SQLite cache.
+- Always calls `playlistItems.list` (paginated) and refreshes the
+  `playlist_items` link table so the local mapping reflects the live
+  playlist.
+- Diffs the live video_ids against `videos` + `transcripts` to compute the
+  candidate set per the predicate documented in
+  `docs/transcript-retry-semantics.md`:
+  - No `videos` row → candidate (`no-video-row`)
+  - `metadata_status != 'ok'` → candidate (`metadata-incomplete`)
+  - Metadata ok, no transcript row, `transcript_status` ∈ (null, pending,
+    failed) → candidate (`transcript-retryable`)
+  - Otherwise → skipped (`complete` or `missing-no-captions` terminal verdict)
+- `hydrate=true` (default): runs the same Step-1 batch + Step-2 serial
+  transcript path as `get_playlist_items` but ONLY for the candidate set.
+  Quota cost: `ceil(N/50)` playlistItems.list + `ceil(M/50)` videos.list,
+  where `M ≤ N` is the candidate count — savings vs. `get_playlist_items`
+  scale with how much of the playlist was already cached.
+- `hydrate=false`: returns the candidate list without issuing any
+  videos.list calls.
+
 ### `get_transcript` — **cache-read-only**
 Post-update, `get_transcript` is not part of the orchestrator fetch flow.
 Orchestrator ETL jobs must use `get_video_details` / `get_playlist_items` with
@@ -48,14 +70,17 @@ populate the cache, use `get_video_details(includeTranscript=true)` or
 No retry logic is implemented in any tool. All operations are single-attempt;
 the caller (orchestrating agent or user) is responsible for retrying on failure.
 
-| Tool                  | Operation              | Retries | Backoff |
-|-----------------------|------------------------|---------|---------|
-| `get_video_details`   | videos.list (metadata) | none    | —       |
-| `get_video_details`   | InnerTube transcript   | none    | —       |
-| `get_playlist_items`  | playlistItems.list     | none    | —       |
-| `get_playlist_items`  | videos.list (hydrate)  | none    | —       |
-| `get_playlist_items`  | InnerTube transcript   | none    | —       |
-| `get_transcript`      | cache read (SQLite)    | none    | —       |
+| Tool                       | Operation              | Retries | Backoff |
+|----------------------------|------------------------|---------|---------|
+| `get_video_details`        | videos.list (metadata) | none    | —       |
+| `get_video_details`        | InnerTube transcript   | none    | —       |
+| `get_playlist_items`       | playlistItems.list     | none    | —       |
+| `get_playlist_items`       | videos.list (hydrate)  | none    | —       |
+| `get_playlist_items`       | InnerTube transcript   | none    | —       |
+| `get_new_playlist_items`   | playlistItems.list     | none    | —       |
+| `get_new_playlist_items`   | videos.list (diff set) | none    | —       |
+| `get_new_playlist_items`   | InnerTube transcript   | none    | —       |
+| `get_transcript`           | cache read (SQLite)    | none    | —       |
 
 ## Status codes
 
@@ -144,6 +169,22 @@ not batchable. Total quota cost for a playlist hydration of N videos:
 - playlistItems.list paging: `ceil(N / 50)` quota units (independent of hydration)
 - InnerTube transcript: 2 requests per video (player endpoint + caption XML), no quota deducted
 - **Total Data API quota: `2 · ceil(N / 50)` units** (videos.list + playlistItems.list)
+
+### `get_new_playlist_items` — incremental quota
+
+`get_new_playlist_items` runs the same diff-then-hydrate flow but issues
+`videos.list` only over the candidate subset M (where `M ≤ N` is the count of
+playlist items that need ingestion per the diff predicate):
+
+- playlistItems.list paging: `ceil(N / 50)` quota units (always paid — needed
+  to discover the live playlist)
+- YouTube Data API v3: `ceil(M / 50)` quota units (videos.list, only when
+  `hydrate=true`)
+- InnerTube transcript: 2 requests per candidate video, no quota deducted
+- **Total Data API quota: `ceil(N / 50) + ceil(M / 50)` units when hydrating;
+  `ceil(N / 50)` when `hydrate=false`.** When the cache is already fully
+  populated (`M = 0`), the savings vs. `get_playlist_items` is exactly
+  `ceil(N / 50)` videos.list units.
 
 ## Build
 

@@ -1,4 +1,48 @@
 import { withTransaction } from "../connection.js";
+/**
+ * Returns the persisted hydration state for each requested videoId. Always
+ * includes one entry per input id — IDs that have no `videos` row appear with
+ * `hasVideoRow=false` so callers can drive a single diff loop.
+ *
+ * Issues a single SQL query parameterized with one placeholder per id; safe
+ * for the playlist-page volumes this codebase deals with (≤ 500 ids).
+ */
+export function getVideoHydrationStates(db, videoIds) {
+    const result = new Map();
+    for (const id of videoIds) {
+        result.set(id, {
+            videoId: id,
+            hasVideoRow: false,
+            metadataStatus: null,
+            hasTranscriptRow: false,
+            transcriptStatus: null,
+        });
+    }
+    if (videoIds.length === 0)
+        return result;
+    const placeholders = videoIds.map(() => "?").join(",");
+    const rows = db
+        .prepare(`
+    SELECT
+      v.video_id          AS video_id,
+      v.metadata_status   AS metadata_status,
+      v.transcript_status AS transcript_status,
+      EXISTS (SELECT 1 FROM transcripts t WHERE t.video_id = v.video_id) AS has_transcript
+    FROM videos v
+    WHERE v.video_id IN (${placeholders})
+  `)
+        .all(...videoIds);
+    for (const row of rows) {
+        result.set(row.video_id, {
+            videoId: row.video_id,
+            hasVideoRow: true,
+            metadataStatus: row.metadata_status,
+            hasTranscriptRow: row.has_transcript === 1,
+            transcriptStatus: row.transcript_status,
+        });
+    }
+    return result;
+}
 function toIntOrNull(value) {
     if (value === undefined || value === null || value === "")
         return null;

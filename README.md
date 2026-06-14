@@ -15,6 +15,8 @@ Tools exposed:
 | `get_transcript` | Fetch video transcript/captions with timestamps |
 | `summarize_video` | Structured summary with key topics and sections |
 | `analyze_video` | Deep analysis: themes, comment sentiment, key moments |
+| `get_playlist_items` | Fetch a whole playlist (metadata + transcripts) — OAuth |
+| `get_new_playlist_items` | Diff a playlist vs the local cache; ingest only the new items — OAuth |
 
 Prompts exposed:
 

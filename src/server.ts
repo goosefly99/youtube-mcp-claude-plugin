@@ -9,6 +9,7 @@ import { registerAnalyzeVideoTool } from "./tools/analyze-video.js";
 
 import { registerListPlaylistsTool } from "./tools/list-playlists.js";
 import { registerGetPlaylistItemsTool } from "./tools/get-playlist-items.js";
+import { registerGetNewPlaylistItemsTool } from "./tools/get-new-playlist-items.js";
 import { registerManagePlaylistTools } from "./tools/manage-playlist.js";
 
 import { registerGetSavedVideosTool } from "./tools/get-saved-videos.js";
@@ -62,6 +63,7 @@ export function createServer(): McpServer {
   if (config.oauthTokenPath) {
     registerListPlaylistsTool(server);
     registerGetPlaylistItemsTool(server);
+    registerGetNewPlaylistItemsTool(server);
     registerManagePlaylistTools(server);
     console.error("YouTube OAuth playlist tools enabled.");
   }
