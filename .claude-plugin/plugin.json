@@ -1,7 +1,7 @@
 {
   "name": "youtube-mcp-auto-dev",
   "description": "MCP server for YouTube search, transcripts, and video analysis",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "author": { "name": "olive" },
   "repository": "https://github.com/goosefly99/youtube-mcp-claude-plugin.git"
 }
